@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>README — OliveFly Sentinel</title>
+  <style>
+    body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial;background:#0E121C;color:#E7EEF7;line-height:1.55}
+    .wrap{max-width:980px;margin:0 auto;padding:24px}
+    code,pre{background:#111827;border:1px solid rgba(255,255,255,.08);border-radius:12px}
+    pre{padding:14px;overflow:auto}
+    a{color:#00C8A0}
+    h1,h2{margin-top:18px}
+    .box{padding:14px;border-radius:16px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>OliveFly Sentinel — Demo PWA</h1>
+    <div class="box">
+      PWA offline-first per monitoraggio trappole e mosca dell'ulivo: anagrafiche, geolocalizzazione, ispezioni,
+      alert, analytics, comunicazioni e report.
+    </div>
+
+    <h2>1) Avvio in locale (Windows/macOS/Linux)</h2>
+    <p>Serve un server statico (non aprire <code>index.html</code> direttamente, altrimenti Service Worker non funziona).</p>
+    <pre>python -m http.server 8000</pre>
+    <p>Poi apri: <code>http://localhost:8000</code></p>
+
+    <h2>2) Pubblicazione su GitHub Pages</h2>
+    <ol>
+      <li>Carica la cartella del progetto su un repo</li>
+      <li>Settings → Pages → Deploy from a branch</li>
+      <li>Branch: <code>main</code> / folder: <code>/root</code></li>
+      <li>Apri l'URL di GitHub Pages e installa la PWA</li>
+    </ol>
+
+    <h2>3) Feature principali</h2>
+    <ul>
+      <li><b>Trappole</b>: CRUD con coordinate, stato, tag e note</li>
+      <li><b>Mappa</b>: Leaflet, marker per trappole, aggiunta con click destro</li>
+      <li><b>Ispezioni</b>: adulti/femmine/larve + meteo, note, foto opzionale</li>
+      <li><b>Alert</b>: soglie + vicinanza; notifica + log in “Comunicazioni”</li>
+      <li><b>Analisi</b>: trend settimanale, contributo per trappola, rischio euristico</li>
+      <li><b>Report</b>: testo + CSV ispezioni, condivisibile (Web Share/Clipboard)</li>
+      <li><b>Offline-first</b>: IndexedDB + app shell cachata via Service Worker</li>
+    </ul>
+
+    <h2>4) Note tecniche</h2>
+    <ul>
+      <li>Notifiche in background (push) richiedono un backend Web Push (non incluso)</li>
+      <li>Mappa usa tile online OpenStreetMap; offline l'app funziona ma senza tile</li>
+      <li>Meteo: integrazione opzionale con Open-Meteo (no key), solo se online</li>
+    </ul>
+
+    <h2>5) Roadmap (se vuoi farlo “pro”)</h2>
+    <ol>
+      <li>Backend (Supabase/Firebase) con login, ruoli, sync multi-dispositivo</li>
+      <li>Web Push + scheduler server-side per alert</li>
+      <li>Integrazione sensori: ESP32 + LoRaWAN/NB-IoT + payload standard</li>
+      <li>Modello rischio: meteo, fenologia, varietà (Coratina/Leccino…), serie storiche</li>
+      <li>Dashboard agronomo: heatmap, interventi, export per enti/consorzi</li>
+    </ol>
+
+    <p style="margin-top:20px">Fine.</p>
+  </div>
+</body>
+</html>

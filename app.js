@@ -1,0 +1,1953 @@
+import { DB, uid, todayISO, clamp } from "./db.js";
+
+const $ = (sel, root=document) => root.querySelector(sel);
+const $$ = (sel, root=document) => [...root.querySelectorAll(sel)];
+
+const state = {
+  route: "dashboard",
+  q: "",
+  position: null,
+  traps: [],
+  inspections: [],
+  alerts: [],
+  messages: [],
+  settings: {
+    unit: "trappole",
+    nearRadiusM: 200,
+    defaultThreshold: 5,
+    enableWeather: true,
+    enableNearbyAlert: true
+  },
+  map: { obj: null, layer: null, markers: [] },
+  charts: { weekly: null, byTrap: null, risk: null }
+};
+
+function toast(title, msg=""){
+  const root = $("#toast");
+  const el = document.createElement("div");
+  el.className = "item";
+  el.innerHTML = `<strong>${escapeHtml(title)}</strong><span>${escapeHtml(msg)}</span>`;
+  root.appendChild(el);
+  setTimeout(()=>{ el.style.opacity="0"; el.style.transform="translateY(6px)"; }, 2800);
+  setTimeout(()=> el.remove(), 3400);
+}
+
+function escapeHtml(s){
+  return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
+}
+
+function formatDate(iso){
+  if(!iso) return "-";
+  const d = new Date(iso);
+  return d.toLocaleDateString("it-IT", { year:"numeric", month:"short", day:"2-digit" });
+}
+
+function haversineMeters(a, b){
+  if(!a || !b) return Infinity;
+  const R = 6371000;
+  const toRad = (x)=> x*Math.PI/180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const s = Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+async function loadAll(){
+  // settings (merge defaults)
+  const saved = await DB.getSetting("app_settings", null);
+  if(saved) state.settings = { ...state.settings, ...saved };
+
+  state.traps = await DB.getAll("traps");
+  state.inspections = await DB.getAll("inspections");
+  state.alerts = await DB.getAll("alerts");
+  state.messages = await DB.getAll("messages");
+
+  // seed if empty
+  if(state.traps.length === 0){
+    await seedDemo();
+    state.traps = await DB.getAll("traps");
+    state.inspections = await DB.getAll("inspections");
+    state.alerts = await DB.getAll("alerts");
+    state.messages = await DB.getAll("messages");
+  }
+
+  updateBadges();
+}
+
+async function seedDemo(){
+  const now = new Date();
+  const center = { lat: 41.125, lng: 16.87 }; // Bari-ish demo coordinate
+  const traps = [
+    { id: uid("trap"), name:"Trappola A — Coratina", code:"A-001", lat:center.lat+0.004, lng:center.lng+0.006, type:"Cromotropica", bait:"Attrattivo ammoniacale", installDate: todayISO(), status:"Attiva", tags:["coratina","collina"], notes:"Zona ventosa; sostituire pannello ogni 14 gg" },
+    { id: uid("trap"), name:"Trappola B — Leccino", code:"B-002", lat:center.lat-0.003, lng:center.lng+0.002, type:"Feromonica", bait:"Feromone + ammonio", installDate: todayISO(), status:"Attiva", tags:["leccino","pianura"], notes:"Controllare dopo pioggia" },
+    { id: uid("trap"), name:"Trappola C — Area test", code:"C-003", lat:center.lat+0.001, lng:center.lng-0.006, type:"Cromotropica", bait:"Attrattivo proteico", installDate: todayISO(), status:"In manutenzione", tags:["test"], notes:"Sensore in prova (demo)" }
+  ];
+  for(const t of traps) await DB.put("traps", t);
+
+  // Inspections over last 21 days
+  const trapIds = traps.map(t=>t.id);
+  for(let i=0;i<22;i++){
+    const d = new Date(now.getTime() - (21-i)*24*3600*1000);
+    const date = d.toISOString().slice(0,10);
+    for(const trapId of trapIds){
+      if(Math.random() < 0.55) continue;
+      const adults = Math.floor(Math.random()*8);
+      const females = Math.floor(adults * (0.35 + Math.random()*0.35));
+      const larvae = Math.random()<0.25 ? Math.floor(Math.random()*3) : 0;
+      const temp = 18 + Math.random()*12;
+      const hum = 45 + Math.random()*35;
+      const wind = 2 + Math.random()*10;
+      await DB.put("inspections", {
+        id: uid("insp"),
+        trapId,
+        date,
+        adults,
+        females,
+        larvae,
+        temperature: Math.round(temp*10)/10,
+        humidity: Math.round(hum),
+        wind: Math.round(wind),
+        notes: adults>=6 ? "Picco: valutare intervento" : (adults>=3 ? "Trend in crescita" : "Nella norma"),
+        operator: "Pietro (demo)",
+        photoDataUrl: null
+      });
+    }
+  }
+
+  // Alerts
+  const alert1 = { id: uid("al"), name:"Soglia catture (adulti)", metric:"adults", threshold: 5, active: true, scope:"any", note:"Notifica quando una singola ispezione supera 5 adulti" };
+  const alert2 = { id: uid("al"), name:"Presenza larve", metric:"larvae", threshold: 1, active: true, scope:"any", note:"Notifica alla prima larva rilevata" };
+  const alert3 = { id: uid("al"), name:"Trappole vicine (200m)", metric:"nearby", threshold: state.settings.nearRadiusM, active: true, scope:"any", note:"Avvisa se sei vicino a una trappola quando apri la PWA" };
+  for(const a of [alert1, alert2, alert3]) await DB.put("alerts", a);
+
+  // Messages
+  await DB.put("messages", {
+    id: uid("msg"),
+    date: new Date().toISOString(),
+    channel: "Team",
+    title: "Kickoff monitoraggio",
+    body: "Demo: aggiungi trappole, registra ispezioni, genera report e condividilo su WhatsApp/Email.",
+    tags: ["demo", "operativo"]
+  });
+}
+
+function updateBadges(){
+  const activeAlerts = state.alerts.filter(a=>a.active).length;
+  $("#badgeAlerts").textContent = String(activeAlerts);
+
+  const nearby = computeNearbyTraps().length;
+  $("#badgeNearby").textContent = String(nearby);
+}
+
+function setActiveNav(route){
+  $$("#nav a").forEach(a=>{
+    const r = a.getAttribute("data-route");
+    a.classList.toggle("active", r === route);
+  });
+}
+
+function routeFromHash(){
+  const h = location.hash || "#/dashboard";
+  const p = h.replace("#/","").split("?")[0];
+  return p || "dashboard";
+}
+
+function applySearchFilter(items, fields){
+  const q = state.q.trim().toLowerCase();
+  if(!q) return items;
+  return items.filter(it => fields.some(f => String(it[f]||"").toLowerCase().includes(q)));
+}
+
+function computeNearbyTraps(){
+  if(!state.position) return [];
+  const radius = Number(state.settings.nearRadiusM || 200);
+  return state.traps
+    .map(t => ({...t, dist: haversineMeters(state.position, {lat:t.lat, lng:t.lng})}))
+    .filter(t => Number.isFinite(t.dist) && t.dist <= radius)
+    .sort((a,b)=>a.dist-b.dist);
+}
+
+async function requestLocation({silent=false}={}){
+  if(!("geolocation" in navigator)){
+    if(!silent) toast("Geolocalizzazione non supportata", "Il browser non espone navigator.geolocation.");
+    return null;
+  }
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (pos)=>{
+        state.position = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy };
+        updateBadges();
+        if(!silent) toast("Posizione aggiornata", `Accuratezza ~${Math.round(pos.coords.accuracy)}m`);
+        resolve(state.position);
+      },
+      (err)=>{
+        if(!silent) toast("Posizione non disponibile", err.message || "Permessi negati o timeout.");
+        resolve(null);
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 2000 }
+    );
+  });
+}
+
+async function requestNotifications(){
+  if(!("Notification" in window)){
+    toast("Notifiche non supportate", "Il browser non supporta Notification API.");
+    return false;
+  }
+  if(Notification.permission === "granted"){
+    toast("Notifiche attive", "Permesso già concesso.");
+    return true;
+  }
+  const p = await Notification.requestPermission();
+  if(p === "granted"){
+    toast("Notifiche attive", "Permesso concesso.");
+    return true;
+  }
+  toast("Notifiche disattivate", "Permesso non concesso.");
+  return false;
+}
+
+function pushNotification(title, body){
+  if(!("Notification" in window) || Notification.permission !== "granted") return;
+  try{
+    new Notification(title, { body, icon:"icons/icon-192.png" });
+  }catch(e){
+    // Some browsers require service worker for notifications; fallback to toast
+    toast(title, body);
+  }
+}
+
+function riskLabel(score){
+  if(score >= 75) return { label:"Alto", cls:"danger" };
+  if(score >= 45) return { label:"Medio", cls:"warn" };
+  return { label:"Basso", cls:"ok" };
+}
+
+function computeRiskForTrap(trapId){
+  // Simple heuristic: last 7 days adults avg + larvae presence + temperature
+  const insps = state.inspections.filter(i=>i.trapId===trapId).sort((a,b)=>a.date.localeCompare(b.date));
+  if(insps.length === 0) return 0;
+
+  const last7 = insps.slice(-7);
+  const avgAdults = last7.reduce((s,i)=>s+i.adults,0)/Math.max(1,last7.length);
+  const larvaeAny = last7.some(i=>i.larvae>0) ? 1 : 0;
+  const avgTemp = last7.reduce((s,i)=>s+(Number(i.temperature)||0),0)/Math.max(1,last7.length);
+
+  // normalize
+  let score = 0;
+  score += clamp((avgAdults/8)*60, 0, 60);
+  score += larvaeAny ? 25 : 0;
+  score += clamp(((avgTemp-18)/12)*15, 0, 15);
+  return Math.round(score);
+}
+
+function render(){
+  state.route = routeFromHash();
+  setActiveNav(state.route);
+  const view = $("#view");
+  view.innerHTML = "";
+
+  const route = state.route;
+  if(route === "dashboard") view.appendChild(viewDashboard());
+  else if(route === "map") view.appendChild(viewMap());
+  else if(route === "traps") view.appendChild(viewTraps());
+  else if(route === "inspections") view.appendChild(viewInspections());
+  else if(route === "analytics") view.appendChild(viewAnalytics());
+  else if(route === "alerts") view.appendChild(viewAlerts());
+  else if(route === "messages") view.appendChild(viewMessages());
+  else if(route === "settings") view.appendChild(viewSettings());
+  else if(route === "about") view.appendChild(viewAbout());
+  else view.appendChild(viewNotFound());
+
+  setTimeout(()=> postRender(route), 0);
+}
+
+async function postRender(route){
+  if(route === "map"){
+    await ensureMap();
+    drawMapMarkers();
+  }
+  if(route === "analytics"){
+    drawCharts();
+  }
+}
+
+function viewDashboard(){
+  const nearby = computeNearbyTraps();
+  const totalTraps = state.traps.length;
+  const totalInspections = state.inspections.length;
+
+  const lastInspections = [...state.inspections].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
+  const last7 = state.inspections.filter(i => i.date >= daysAgoISO(6));
+  const avgAdults = last7.length ? (last7.reduce((s,i)=>s+i.adults,0)/last7.length) : 0;
+  const larvaeHits = last7.filter(i=>i.larvae>0).length;
+
+  const el = document.createElement("div");
+  el.innerHTML = `
+    <div class="kpis">
+      <div class="kpi">
+        <div class="label">Trappole registrate</div>
+        <div class="value">${totalTraps}</div>
+        <div class="hint">Gestione anagrafiche e stato</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Ispezioni totali</div>
+        <div class="value">${totalInspections}</div>
+        <div class="hint">Storico completo offline-first</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Media adulti (ultimi 7 gg)</div>
+        <div class="value">${avgAdults.toFixed(1)}</div>
+        <div class="hint">Indicatore di pressione</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Rilevazioni larve (ultimi 7 gg)</div>
+        <div class="value">${larvaeHits}</div>
+        <div class="hint">Evento “alta attenzione”</div>
+      </div>
+    </div>
+
+    <div class="grid" style="margin-top:14px">
+      <div class="card" style="grid-column: span 7">
+        <div class="hd">
+          <div>
+            <h2>Azioni rapide</h2>
+            <p>Setup in 2 minuti</p>
+          </div>
+        </div>
+        <div class="bd">
+          <div class="row">
+            <button class="btn primary" id="dashAddTrap">➕ Nuova trappola</button>
+            <button class="btn" id="dashAddInspection">🧾 Nuova ispezione</button>
+            <button class="btn" id="dashReport">📤 Genera report</button>
+            <button class="btn" id="dashNotif">🔔 Attiva notifiche</button>
+          </div>
+          <hr class="sep"/>
+          <div class="mini">
+            <b>Demo “wow”:</b> premi <b>Posizione</b> in alto, vai su <b>Mappa</b> e vedrai le trappole vicine (badge a sinistra).
+            Registra un'ispezione sopra soglia per vedere un alert + notifica.
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 5">
+        <div class="hd">
+          <div>
+            <h2>Trappole vicine</h2>
+            <p>${state.position ? "Basato sulla tua posizione" : "Attiva la posizione per vedere vicinanza"}</p>
+          </div>
+          <button class="btn small" id="dashLocate">📍 Aggiorna</button>
+        </div>
+        <div class="bd">
+          ${nearby.length ? `
+            <table class="table">
+              <thead><tr><th>Nome</th><th>Distanza</th><th>Stato</th></tr></thead>
+              <tbody>
+                ${nearby.slice(0,5).map(t=>`
+                  <tr data-trap="${t.id}" class="rowTrap">
+                    <td>${escapeHtml(t.name)}</td>
+                    <td>${Math.round(t.dist)} m</td>
+                    <td><span class="pill ${t.status==="Attiva"?"ok":(t.status==="In manutenzione"?"warn":"") }">${escapeHtml(t.status)}</span></td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          ` : `<div class="mini">Nessuna trappola nel raggio configurato (${state.settings.nearRadiusM} m).<br/>Tip: aggiungi una trappola usando “Usa posizione attuale”.</div>`}
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 12">
+        <div class="hd">
+          <div>
+            <h2>Ultime ispezioni</h2>
+            <p>Trend rapido e note operative</p>
+          </div>
+          <button class="btn small" id="dashGoInspections">Apri Ispezioni →</button>
+        </div>
+        <div class="bd">
+          <table class="table">
+            <thead><tr><th>Data</th><th>Trappola</th><th>Adulti</th><th>Femmine</th><th>Larve</th><th>Note</th></tr></thead>
+            <tbody>
+              ${lastInspections.map(i=>{
+                const t = state.traps.find(x=>x.id===i.trapId);
+                const risk = i.larvae>0 ? "danger" : (i.adults>=5 ? "warn" : "ok");
+                return `
+                  <tr>
+                    <td>${formatDate(i.date)}</td>
+                    <td>${escapeHtml(t? t.name : "—")}</td>
+                    <td><span class="pill ${risk}">${i.adults}</span></td>
+                    <td>${i.females}</td>
+                    <td>${i.larvae}</td>
+                    <td>${escapeHtml(i.notes||"")}</td>
+                  </tr>
+                `;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // actions
+  el.querySelector("#dashAddTrap").onclick = ()=> openTrapModal();
+  el.querySelector("#dashAddInspection").onclick = ()=> openInspectionModal();
+  el.querySelector("#dashReport").onclick = ()=> openReportModal();
+  el.querySelector("#dashNotif").onclick = ()=> requestNotifications();
+  el.querySelector("#dashLocate").onclick = async ()=> { await requestLocation(); render(); };
+  el.querySelector("#dashGoInspections").onclick = ()=> location.hash="#/inspections";
+  $$(".rowTrap", el).forEach(r=> r.onclick = ()=>{
+    const id = r.getAttribute("data-trap");
+    location.hash = "#/traps";
+    setTimeout(()=> openTrapModal(state.traps.find(t=>t.id===id)), 0);
+  });
+
+  return el;
+}
+
+function viewMap(){
+  const el = document.createElement("div");
+  const nearby = computeNearbyTraps();
+
+  el.innerHTML = `
+    <div class="grid">
+      <div class="card" style="grid-column: span 8">
+        <div class="hd">
+          <div>
+            <h2>Mappa trappole</h2>
+            <p>Click marker per dettagli e ispezione rapida</p>
+          </div>
+          <div class="row">
+            <button class="btn small" id="mapCenter">🎯 Centra</button>
+            <button class="btn small" id="mapAdd">➕ Aggiungi qui</button>
+          </div>
+        </div>
+        <div class="bd">
+          <div id="map" class="map"></div>
+          <div class="mini" style="margin-top:10px">
+            <b>Nota:</b> le mappe usano tile online (Leaflet/OpenStreetMap). Se offline, la PWA resta usabile (CRUD + analytics), ma senza tile.
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 4">
+        <div class="hd">
+          <div>
+            <h2>Vicino a te</h2>
+            <p>Raggio: ${state.settings.nearRadiusM} m</p>
+          </div>
+          <button class="btn small" id="mapLocate">📍 Aggiorna</button>
+        </div>
+        <div class="bd">
+          ${nearby.length ? `
+            <table class="table">
+              <thead><tr><th>Trappola</th><th>Distanza</th><th></th></tr></thead>
+              <tbody>
+                ${nearby.slice(0,8).map(t=>`
+                  <tr>
+                    <td>${escapeHtml(t.name)}</td>
+                    <td>${Math.round(t.dist)} m</td>
+                    <td><button class="btn small" data-open="${t.id}">Apri</button></td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          ` : `<div class="mini">${state.position ? "Nessuna trappola vicina." : "Attiva la posizione per vedere vicinanza."}</div>`}
+          <hr class="sep"/>
+          <div class="mini">
+            <b>Alert vicinanza:</b> quando apri l’app e sei vicino a una trappola attiva, puoi ricevere una notifica.
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  el.querySelector("#mapLocate").onclick = async ()=> { await requestLocation(); render(); };
+  el.querySelector("#mapCenter").onclick = ()=> centerMap();
+  el.querySelector("#mapAdd").onclick = ()=> openTrapModal(null, { useMapCenter:true });
+
+  $$("#viewMap [data-open]", el).forEach(()=>{});
+  $$("#view [data-open]", el).forEach(btn=>{
+    btn.onclick = ()=>{
+      const id = btn.getAttribute("data-open");
+      const trap = state.traps.find(t=>t.id===id);
+      openTrapModal(trap);
+    };
+  });
+
+  return el;
+}
+
+function viewTraps(){
+  const traps = applySearchFilter(state.traps, ["name","code","type","bait","status","notes","tags"]);
+  const el = document.createElement("div");
+  el.innerHTML = `
+    <div class="grid">
+      <div class="card" style="grid-column: span 12">
+        <div class="hd">
+          <div>
+            <h2>Trappole</h2>
+            <p>Anagrafiche, coordinate, stato e note</p>
+          </div>
+          <div class="row">
+            <button class="btn" id="btnImport">⬆️ Import JSON</button>
+            <button class="btn" id="btnExport">⬇️ Export JSON</button>
+            <button class="btn primary" id="btnAddTrap">➕ Nuova trappola</button>
+          </div>
+        </div>
+        <div class="bd">
+          <table class="table">
+            <thead><tr>
+              <th>Nome</th><th>Codice</th><th>Tipo</th><th>Stato</th><th>Ultima ispezione</th><th>Risk</th><th></th>
+            </tr></thead>
+            <tbody>
+              ${traps.map(t=>{
+                const last = lastInspectionForTrap(t.id);
+                const score = computeRiskForTrap(t.id);
+                const r = riskLabel(score);
+                return `
+                  <tr>
+                    <td>${escapeHtml(t.name)}</td>
+                    <td>${escapeHtml(t.code||"")}</td>
+                    <td>${escapeHtml(t.type||"")}</td>
+                    <td><span class="pill ${t.status==="Attiva"?"ok":(t.status==="In manutenzione"?"warn":"") }">${escapeHtml(t.status||"")}</span></td>
+                    <td>${last ? formatDate(last.date) : "—"}</td>
+                    <td><span class="pill ${r.cls}">${r.label} • ${score}</span></td>
+                    <td style="text-align:right">
+                      <button class="btn small" data-edit="${t.id}">Apri</button>
+                    </td>
+                  </tr>
+                `;
+              }).join("")}
+            </tbody>
+          </table>
+          ${traps.length===0 ? `<div class="mini">Nessun risultato per la ricerca corrente.</div>` : ""}
+        </div>
+      </div>
+    </div>
+  `;
+
+  el.querySelector("#btnAddTrap").onclick = ()=> openTrapModal();
+  el.querySelector("#btnExport").onclick = ()=> exportData();
+  el.querySelector("#btnImport").onclick = ()=> importData();
+  $$("#view [data-edit]", el).forEach(btn=>{
+    btn.onclick = ()=>{
+      const id = btn.getAttribute("data-edit");
+      openTrapModal(state.traps.find(t=>t.id===id));
+    };
+  });
+
+  return el;
+}
+
+function viewInspections(){
+  const items = applySearchFilter([...state.inspections].sort((a,b)=>b.date.localeCompare(a.date)), ["notes","operator","date"]);
+  const el = document.createElement("div");
+  el.innerHTML = `
+    <div class="grid">
+      <div class="card" style="grid-column: span 12">
+        <div class="hd">
+          <div>
+            <h2>Ispezioni</h2>
+            <p>Catture, condizioni e note operative</p>
+          </div>
+          <div class="row">
+            <button class="btn" id="btnReport">📤 Report</button>
+            <button class="btn primary" id="btnAddInspection">➕ Nuova ispezione</button>
+          </div>
+        </div>
+        <div class="bd">
+          <table class="table">
+            <thead><tr>
+              <th>Data</th><th>Trappola</th><th>Adulti</th><th>Femmine</th><th>Larve</th><th>Meteo</th><th>Note</th><th></th>
+            </tr></thead>
+            <tbody>
+              ${items.map(i=>{
+                const t = state.traps.find(x=>x.id===i.trapId);
+                const risk = i.larvae>0 ? "danger" : (i.adults>=5 ? "warn" : "ok");
+                const meteo = `${i.temperature ?? "—"}°C • ${i.humidity ?? "—"}% • ${i.wind ?? "—"} km/h`;
+                return `
+                  <tr>
+                    <td>${formatDate(i.date)}</td>
+                    <td>${escapeHtml(t? t.name : "—")}</td>
+                    <td><span class="pill ${risk}">${i.adults}</span></td>
+                    <td>${i.females}</td>
+                    <td>${i.larvae}</td>
+                    <td>${escapeHtml(meteo)}</td>
+                    <td>${escapeHtml(i.notes||"")}</td>
+                    <td style="text-align:right"><button class="btn small" data-open="${i.id}">Apri</button></td>
+                  </tr>
+                `;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+
+  el.querySelector("#btnAddInspection").onclick = ()=> openInspectionModal();
+  el.querySelector("#btnReport").onclick = ()=> openReportModal();
+  $$("#view [data-open]", el).forEach(btn=>{
+    btn.onclick = ()=>{
+      const id = btn.getAttribute("data-open");
+      const i = state.inspections.find(x=>x.id===id);
+      openInspectionModal(i);
+    };
+  });
+  return el;
+}
+
+function viewAnalytics(){
+  const el = document.createElement("div");
+  el.innerHTML = `
+    <div class="grid">
+      <div class="card" style="grid-column: span 6">
+        <div class="hd">
+          <div>
+            <h2>Trend settimanale</h2>
+            <p>Somma adulti (ultimi 28 gg)</p>
+          </div>
+          <button class="btn small" id="btnRecalc">↻ Ricalcola</button>
+        </div>
+        <div class="bd">
+          <canvas id="chWeekly" height="180"></canvas>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 6">
+        <div class="hd">
+          <div>
+            <h2>Contributo per trappola</h2>
+            <p>Somma adulti (ultimi 14 gg)</p>
+          </div>
+        </div>
+        <div class="bd">
+          <canvas id="chByTrap" height="180"></canvas>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 12">
+        <div class="hd">
+          <div>
+            <h2>Rischio (euristica)</h2>
+            <p>Adulti + Larve + Temperatura (ultimi 7 gg)</p>
+          </div>
+          <button class="btn small" id="btnSuggest">💡 Suggerimenti</button>
+        </div>
+        <div class="bd">
+          <div class="split">
+            <div>
+              <canvas id="chRisk" height="170"></canvas>
+            </div>
+            <div>
+              <div id="riskTable"></div>
+              <hr class="sep"/>
+              <div class="mini" id="suggestBox"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  el.querySelector("#btnRecalc").onclick = ()=> drawCharts();
+  el.querySelector("#btnSuggest").onclick = ()=> renderSuggestions();
+  return el;
+}
+
+function viewAlerts(){
+  const alerts = applySearchFilter(state.alerts, ["name","metric","note"]);
+  const el = document.createElement("div");
+  el.innerHTML = `
+    <div class="grid">
+      <div class="card" style="grid-column: span 12">
+        <div class="hd">
+          <div>
+            <h2>Alert & regole</h2>
+            <p>Soglie su ispezioni e vicinanza</p>
+          </div>
+          <div class="row">
+            <button class="btn" id="btnEnableNotif">🔔 Attiva notifiche</button>
+            <button class="btn primary" id="btnAddAlert">➕ Nuova regola</button>
+          </div>
+        </div>
+        <div class="bd">
+          <table class="table">
+            <thead><tr><th>Nome</th><th>Metrica</th><th>Soglia</th><th>Attiva</th><th>Note</th><th></th></tr></thead>
+            <tbody>
+              ${alerts.map(a=>`
+                <tr>
+                  <td>${escapeHtml(a.name)}</td>
+                  <td>${escapeHtml(a.metric)}</td>
+                  <td>${escapeHtml(String(a.threshold))}</td>
+                  <td>${a.active ? `<span class="pill ok">ON</span>` : `<span class="pill">OFF</span>`}</td>
+                  <td>${escapeHtml(a.note||"")}</td>
+                  <td style="text-align:right">
+                    <button class="btn small" data-edit="${a.id}">Apri</button>
+                  </td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+  el.querySelector("#btnAddAlert").onclick = ()=> openAlertModal();
+  el.querySelector("#btnEnableNotif").onclick = ()=> requestNotifications();
+  $$("#view [data-edit]", el).forEach(btn=>{
+    btn.onclick = ()=>{
+      const id = btn.getAttribute("data-edit");
+      openAlertModal(state.alerts.find(a=>a.id===id));
+    };
+  });
+  return el;
+}
+
+function viewMessages(){
+  const msgs = applySearchFilter([...state.messages].sort((a,b)=>b.date.localeCompare(a.date)), ["title","body","channel","tags"]);
+  const el = document.createElement("div");
+  el.innerHTML = `
+    <div class="grid">
+      <div class="card" style="grid-column: span 12">
+        <div class="hd">
+          <div>
+            <h2>Comunicazioni</h2>
+            <p>Log condivisibile (team, agronomo, cooperativa)</p>
+          </div>
+          <div class="row">
+            <button class="btn" id="btnShareLog">📤 Condividi log</button>
+            <button class="btn primary" id="btnAddMsg">➕ Nuovo messaggio</button>
+          </div>
+        </div>
+        <div class="bd">
+          ${msgs.length ? msgs.map(m=>`
+            <div style="padding:12px; border-radius:16px; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.02); margin-bottom:10px">
+              <div style="display:flex; justify-content:space-between; gap:10px">
+                <div>
+                  <div style="font-weight:700">${escapeHtml(m.title)}</div>
+                  <div class="mini">${escapeHtml(m.channel)} • ${new Date(m.date).toLocaleString("it-IT")}</div>
+                </div>
+                <div>
+                  <button class="btn small" data-open="${m.id}">Apri</button>
+                </div>
+              </div>
+              <div style="margin-top:10px; color:rgba(231,238,247,.92)">${escapeHtml(m.body).replaceAll("\n","<br/>")}</div>
+              ${m.tags?.length ? `<div style="margin-top:10px">${m.tags.map(t=>`<span class="pill">${escapeHtml(t)}</span>`).join(" ")}</div>` : ""}
+            </div>
+          `).join("") : `<div class="mini">Nessun messaggio. Usa “Nuovo messaggio”.</div>`}
+        </div>
+      </div>
+    </div>
+  `;
+
+  el.querySelector("#btnAddMsg").onclick = ()=> openMessageModal();
+  el.querySelector("#btnShareLog").onclick = ()=> shareLog();
+  $$("#view [data-open]", el).forEach(btn=>{
+    btn.onclick = ()=>{
+      const id = btn.getAttribute("data-open");
+      openMessageModal(state.messages.find(m=>m.id===id));
+    };
+  });
+  return el;
+}
+
+function viewSettings(){
+  const el = document.createElement("div");
+  el.innerHTML = `
+    <div class="grid">
+      <div class="card" style="grid-column: span 8">
+        <div class="hd">
+          <div>
+            <h2>Impostazioni</h2>
+            <p>Comportamento, soglie e offline</p>
+          </div>
+          <button class="btn small danger" id="btnReset">Reset demo</button>
+        </div>
+        <div class="bd">
+          <div class="row">
+            <div class="field">
+              <label>Raggio vicinanza (m)</label>
+              <input id="nearRadius" type="number" min="50" step="10" value="${state.settings.nearRadiusM}" />
+            </div>
+            <div class="field">
+              <label>Soglia default (adulti)</label>
+              <input id="defaultThreshold" type="number" min="1" step="1" value="${state.settings.defaultThreshold}" />
+            </div>
+          </div>
+          <div class="row" style="margin-top:12px">
+            <div class="field">
+              <label>Alert vicinanza</label>
+              <select id="enableNearby">
+                <option value="true" ${state.settings.enableNearbyAlert ? "selected":""}>Attivo</option>
+                <option value="false" ${!state.settings.enableNearbyAlert ? "selected":""}>Disattivo</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Meteo (Open-Meteo, no-key)</label>
+              <select id="enableWeather">
+                <option value="true" ${state.settings.enableWeather ? "selected":""}>Attivo</option>
+                <option value="false" ${!state.settings.enableWeather ? "selected":""}>Disattivo</option>
+              </select>
+            </div>
+          </div>
+          <hr class="sep"/>
+          <div class="row">
+            <button class="btn" id="btnNotif">🔔 Notifiche</button>
+            <button class="btn" id="btnOffline">⬇️ Cache offline</button>
+            <button class="btn primary" id="btnSaveSettings">Salva</button>
+          </div>
+          <div class="mini" style="margin-top:12px">
+            <b>Nota:</b> per notifiche “push” in background servirebbe un backend (Web Push). In questa demo usiamo Notification API (quando l’app è aperta) + toast.
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 4">
+        <div class="hd">
+          <div>
+            <h2>Esportazione & backup</h2>
+            <p>JSON locale</p>
+          </div>
+        </div>
+        <div class="bd">
+          <button class="btn" id="btnExportAll">⬇️ Export completo</button>
+          <button class="btn" style="margin-left:10px" id="btnImportAll">⬆️ Import</button>
+          <hr class="sep"/>
+          <div class="mini">
+            Esporta per inviare il backup a un agronomo o caricare su un server.
+            In produzione aggiungeremmo sync/cloud, ruoli e audit.
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  el.querySelector("#btnSaveSettings").onclick = async ()=>{
+    state.settings.nearRadiusM = Number($("#nearRadius").value || 200);
+    state.settings.defaultThreshold = Number($("#defaultThreshold").value || 5);
+    state.settings.enableNearbyAlert = $("#enableNearby").value === "true";
+    state.settings.enableWeather = $("#enableWeather").value === "true";
+    await DB.setSetting("app_settings", state.settings);
+    toast("Salvato", "Impostazioni aggiornate.");
+    updateBadges();
+    render();
+  };
+  el.querySelector("#btnNotif").onclick = ()=> requestNotifications();
+  el.querySelector("#btnOffline").onclick = ()=> toast("Offline", "Apri la PWA una volta: l'app shell viene cachata automaticamente.");
+  el.querySelector("#btnReset").onclick = ()=> resetDemo();
+  el.querySelector("#btnExportAll").onclick = ()=> exportData(true);
+  el.querySelector("#btnImportAll").onclick = ()=> importData(true);
+
+  return el;
+}
+
+function viewAbout(){
+  const el = document.createElement("div");
+  el.innerHTML = `
+    <div class="grid">
+      <div class="card" style="grid-column: span 12">
+        <div class="hd">
+          <div>
+            <h2>Info</h2>
+            <p>Roadmap consigliata (se vuoi farlo “serio”)</p>
+          </div>
+        </div>
+        <div class="bd">
+          <div class="split">
+            <div>
+              <div style="font-weight:700; margin-bottom:8px">Cosa fa questa demo</div>
+              <ul class="mini">
+                <li>CRUD trappole con coordinate + mappa</li>
+                <li>Ispezioni con catture, condizioni meteo, note</li>
+                <li>Alert su soglie + vicinanza</li>
+                <li>Analytics (Chart.js) + rischio euristico</li>
+                <li>Report condivisibile (Web Share / Clipboard)</li>
+                <li>Offline-first (IndexedDB) + PWA installabile</li>
+              </ul>
+              <hr class="sep"/>
+              <div style="font-weight:700; margin-bottom:8px">Limiti (voluti, per restare “solo Git”)</div>
+              <ul class="mini">
+                <li>Niente push in background (serve backend Web Push)</li>
+                <li>Niente login reale (serve backend + auth)</li>
+                <li>Mappa tile online (offline = no tiles)</li>
+              </ul>
+            </div>
+            <div>
+              <div style="font-weight:700; margin-bottom:8px">Roadmap “pro” (step minimi)</div>
+              <ol class="mini">
+                <li>Backend leggero (Supabase/Firebase) + ruoli</li>
+                <li>Web Push + alert schedulati</li>
+                <li>Integrazione sensori/IoT (ESP32, LoRaWAN, NB-IoT)</li>
+                <li>Modello rischio basato su dati reali + meteo</li>
+                <li>Dashboard agronomo: heatmap + interventi</li>
+              </ol>
+              <hr class="sep"/>
+              <button class="btn primary" id="btnOpenRoadmap">📄 Apri README</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  el.querySelector("#btnOpenRoadmap").onclick = ()=> window.open("./README.html", "_blank");
+  return el;
+}
+
+function viewNotFound(){
+  const el = document.createElement("div");
+  el.innerHTML = `<div class="card"><div class="bd">Pagina non trovata.</div></div>`;
+  return el;
+}
+
+// ---------- Map ----------
+async function ensureMap(){
+  if(state.map.obj) return;
+  const pos = state.position || { lat: 41.125, lng: 16.87 };
+  const map = L.map("map", { zoomControl: true }).setView([pos.lat, pos.lng], 13);
+  state.map.obj = map;
+
+  try{
+    const tiles = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap'
+    });
+    tiles.addTo(map);
+    state.map.layer = tiles;
+  }catch(e){
+    // ignore
+  }
+
+  // Long press / right click add
+  map.on("contextmenu", (e)=>{
+    openTrapModal(null, { lat:e.latlng.lat, lng:e.latlng.lng });
+  });
+}
+
+function drawMapMarkers(){
+  if(!state.map.obj) return;
+  // cleanup
+  for(const m of state.map.markers) m.remove();
+  state.map.markers = [];
+
+  for(const t of state.traps){
+    const color = t.status==="Attiva" ? "#00C8A0" : (t.status==="In manutenzione" ? "#FFB020" : "#93A4B7");
+    const marker = L.circleMarker([t.lat, t.lng], { radius: 9, color, fillColor: color, fillOpacity: 0.85, weight: 2 });
+    marker.addTo(state.map.obj);
+    marker.on("click", ()=> openTrapModal(t));
+    marker.bindTooltip(`${t.name}`, { direction:"top", offset:[0,-8], opacity:0.95 });
+    state.map.markers.push(marker);
+  }
+
+  // user location
+  if(state.position){
+    const m = L.circleMarker([state.position.lat, state.position.lng], { radius: 9, color:"#00A3FF", fillColor:"#00A3FF", fillOpacity: 0.85, weight: 2 });
+    m.addTo(state.map.obj);
+    m.bindTooltip("Tu sei qui", { direction:"top", offset:[0,-8] });
+    state.map.markers.push(m);
+  }
+}
+
+function centerMap(){
+  if(!state.map.obj) return;
+  const pos = state.position || { lat: 41.125, lng: 16.87 };
+  state.map.obj.setView([pos.lat, pos.lng], 14);
+}
+
+// ---------- Utils ----------
+function daysAgoISO(n){
+  const d = new Date();
+  d.setDate(d.getDate()-n);
+  return d.toISOString().slice(0,10);
+}
+
+function lastInspectionForTrap(trapId){
+  const insps = state.inspections.filter(i=>i.trapId===trapId);
+  if(insps.length===0) return null;
+  return insps.sort((a,b)=>b.date.localeCompare(a.date))[0];
+}
+
+function toCSV(rows){
+  const esc = (v) => `"${String(v??"").replaceAll('"','""')}"`;
+  const keys = Object.keys(rows[0]||{});
+  return [keys.map(esc).join(","), ...rows.map(r=>keys.map(k=>esc(r[k])).join(","))].join("\n");
+}
+
+// ---------- Modals ----------
+function openModal({title, bodyHTML, footerButtons=[]}){
+  const root = $("#modalRoot");
+  root.classList.remove("hidden");
+  root.innerHTML = `
+    <div class="modal-backdrop" id="mb">
+      <div class="modal">
+        <div class="hd">
+          <h3>${escapeHtml(title)}</h3>
+          <button class="btn small" id="mClose">✕</button>
+        </div>
+        <div class="bd">${bodyHTML}</div>
+        <div class="ft">
+          ${footerButtons.map(b=>`<button class="btn ${b.kind||""}" id="${b.id}">${escapeHtml(b.label)}</button>`).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+  $("#mClose").onclick = closeModal;
+  $("#mb").onclick = (e)=>{ if(e.target.id==="mb") closeModal(); };
+  return root;
+}
+function closeModal(){
+  const root = $("#modalRoot");
+  root.classList.add("hidden");
+  root.innerHTML = "";
+}
+
+async function openTrapModal(trap=null, opts={}){
+  const isEdit = !!trap;
+  const p = state.position;
+
+  const useMapCenter = opts.useMapCenter && state.map.obj;
+  const center = useMapCenter ? state.map.obj.getCenter() : null;
+  const lat = opts.lat ?? (center ? center.lat : (trap?.lat ?? p?.lat ?? 41.125));
+  const lng = opts.lng ?? (center ? center.lng : (trap?.lng ?? p?.lng ?? 16.87));
+
+  const body = `
+    <div class="split">
+      <div>
+        <div class="row">
+          <div class="field">
+            <label>Nome</label>
+            <input id="tName" value="${escapeHtml(trap?.name||"")}" placeholder="Es. Trappola Nord — Coratina" />
+          </div>
+          <div class="field">
+            <label>Codice</label>
+            <input id="tCode" value="${escapeHtml(trap?.code||"")}" placeholder="Es. A-001" />
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <div class="field">
+            <label>Tipo</label>
+            <select id="tType">
+              ${["Cromotropica","Feromonica","Altro"].map(x=>`<option ${trap?.type===x?"selected":""}>${x}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field">
+            <label>Esca/Attrattivo</label>
+            <input id="tBait" value="${escapeHtml(trap?.bait||"")}" placeholder="Es. Feromone + ammonio" />
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <div class="field">
+            <label>Latitudine</label>
+            <input id="tLat" type="number" step="0.000001" value="${lat}" />
+          </div>
+          <div class="field">
+            <label>Longitudine</label>
+            <input id="tLng" type="number" step="0.000001" value="${lng}" />
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <div class="field">
+            <label>Data installazione</label>
+            <input id="tInstall" type="date" value="${trap?.installDate||todayISO()}" />
+          </div>
+          <div class="field">
+            <label>Stato</label>
+            <select id="tStatus">
+              ${["Attiva","In manutenzione","Dismessa"].map(x=>`<option ${trap?.status===x?"selected":""}>${x}</option>`).join("")}
+            </select>
+          </div>
+        </div>
+
+        <div class="field" style="margin-top:12px">
+          <label>Tag (separati da virgola)</label>
+          <input id="tTags" value="${escapeHtml((trap?.tags||[]).join(", "))}" placeholder="Es. coratina, collina, irrigato" />
+        </div>
+
+        <div class="field" style="margin-top:12px">
+          <label>Note</label>
+          <textarea id="tNotes" placeholder="Note operative, manutenzione, contesto...">${escapeHtml(trap?.notes||"")}</textarea>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-weight:700; margin-bottom:8px">Azioni</div>
+        <div class="row">
+          <button class="btn" id="tUsePos">📍 Usa posizione</button>
+          <button class="btn" id="tInspect">🧾 Ispezione</button>
+          <button class="btn" id="tRoute">🧭 Naviga</button>
+        </div>
+        <hr class="sep"/>
+        <div class="mini">
+          <b>Geolocalizzazione:</b> “Usa posizione” inserisce la tua posizione attuale nei campi Lat/Lng.<br/>
+          <b>Naviga:</b> apre Google Maps in modalità indicazioni.
+        </div>
+        <hr class="sep"/>
+        <div style="font-weight:700; margin-bottom:8px">Rischio</div>
+        <div class="mini" id="tRiskBox"></div>
+        <hr class="sep"/>
+        <div style="font-weight:700; margin-bottom:8px">Ultima ispezione</div>
+        <div class="mini" id="tLastBox"></div>
+      </div>
+    </div>
+  `;
+
+  const footer = [
+    ...(isEdit ? [{ id:"tDelete", label:"Elimina", kind:"danger" }] : []),
+    { id:"tCancel", label:"Annulla" },
+    { id:"tSave", label: isEdit ? "Salva" : "Crea", kind:"primary" }
+  ];
+
+  openModal({ title: isEdit ? "Trappola" : "Nuova trappola", bodyHTML: body, footerButtons: footer });
+
+  // Fill side panels
+  const score = trap ? computeRiskForTrap(trap.id) : 0;
+  const r = riskLabel(score);
+  $("#tRiskBox").innerHTML = trap ? `
+    <span class="pill ${r.cls}">Rischio ${r.label} • ${score}</span><br/>
+    <span class="mini">Euristica: ultimi 7 gg (adulti + larve + temp)</span>
+  ` : `<span class="mini">Salva la trappola e registra ispezioni per calcolare il rischio.</span>`;
+
+  const last = trap ? lastInspectionForTrap(trap.id) : null;
+  $("#tLastBox").innerHTML = last ? `
+    ${formatDate(last.date)} • Adulti: <b>${last.adults}</b> • Larve: <b>${last.larvae}</b><br/>
+    <span class="mini">${escapeHtml(last.notes||"")}</span>
+  ` : `<span class="mini">Nessuna ispezione.</span>`;
+
+  $("#tCancel").onclick = closeModal;
+
+  $("#tUsePos").onclick = async ()=>{
+    const pos = await requestLocation();
+    if(!pos) return;
+    $("#tLat").value = pos.lat;
+    $("#tLng").value = pos.lng;
+  };
+
+  $("#tInspect").onclick = ()=>{
+    const tempTrap = trap || { id:"__temp__", name: $("#tName").value || "Nuova trappola" };
+    closeModal();
+    openInspectionModal(null, { preTrap: tempTrap, preLatLng: { lat: Number($("#tLat").value), lng: Number($("#tLng").value) } });
+  };
+
+  $("#tRoute").onclick = ()=>{
+    const la = Number($("#tLat").value), lo = Number($("#tLng").value);
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${la},${lo}`;
+    window.open(url, "_blank");
+  };
+
+  if(isEdit){
+    $("#tDelete").onclick = async ()=>{
+      if(!confirm("Eliminare la trappola e le ispezioni collegate?")) return;
+      await DB.delete("traps", trap.id);
+      // cascade delete inspections
+      const insps = state.inspections.filter(i=>i.trapId===trap.id);
+      for(const i of insps) await DB.delete("inspections", i.id);
+      toast("Eliminata", trap.name);
+      await loadAll();
+      closeModal();
+      render();
+    };
+  }
+
+  $("#tSave").onclick = async ()=>{
+    const name = $("#tName").value.trim();
+    if(!name){
+      toast("Nome mancante", "Inserisci almeno il nome della trappola.");
+      return;
+    }
+    const obj = {
+      id: trap?.id || uid("trap"),
+      name,
+      code: $("#tCode").value.trim(),
+      type: $("#tType").value,
+      bait: $("#tBait").value.trim(),
+      lat: Number($("#tLat").value),
+      lng: Number($("#tLng").value),
+      installDate: $("#tInstall").value,
+      status: $("#tStatus").value,
+      tags: $("#tTags").value.split(",").map(s=>s.trim()).filter(Boolean),
+      notes: $("#tNotes").value.trim()
+    };
+    await DB.put("traps", obj);
+    toast(isEdit ? "Salvata" : "Creata", obj.name);
+    await loadAll();
+    closeModal();
+    render();
+    if(state.route==="map") drawMapMarkers();
+  };
+}
+
+async function openInspectionModal(inspection=null, opts={}){
+  const isEdit = !!inspection;
+
+  const preTrap = opts.preTrap || (inspection ? state.traps.find(t=>t.id===inspection.trapId) : null);
+
+  const trapOptions = state.traps.map(t=>`<option value="${t.id}" ${inspection?.trapId===t.id ? "selected":""}>${escapeHtml(t.name)}</option>`).join("");
+  const selectedTrapId = inspection?.trapId || preTrap?.id || (state.traps[0]?.id || "");
+  const selectedTrap = state.traps.find(t=>t.id===selectedTrapId) || preTrap || null;
+
+  // Weather auto (optional)
+  let weatherHint = "";
+  if(state.settings.enableWeather && selectedTrap && navigator.onLine){
+    weatherHint = `<span class="mini">Suggerimento: puoi compilare meteo automaticamente (Open-Meteo) dal pulsante.</span>`;
+  }
+
+  const body = `
+    <div class="split">
+      <div>
+        <div class="row">
+          <div class="field">
+            <label>Trappola</label>
+            <select id="iTrap">${trapOptions}</select>
+          </div>
+          <div class="field">
+            <label>Data</label>
+            <input id="iDate" type="date" value="${inspection?.date || todayISO()}" />
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <div class="field">
+            <label>Adulti</label>
+            <input id="iAdults" type="number" min="0" step="1" value="${inspection?.adults ?? 0}" />
+          </div>
+          <div class="field">
+            <label>Femmine (stima)</label>
+            <input id="iFemales" type="number" min="0" step="1" value="${inspection?.females ?? 0}" />
+          </div>
+          <div class="field">
+            <label>Larve</label>
+            <input id="iLarvae" type="number" min="0" step="1" value="${inspection?.larvae ?? 0}" />
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <div class="field">
+            <label>Temperatura (°C)</label>
+            <input id="iTemp" type="number" step="0.1" value="${inspection?.temperature ?? ""}" placeholder="Es. 26.5" />
+          </div>
+          <div class="field">
+            <label>Umidità (%)</label>
+            <input id="iHum" type="number" step="1" value="${inspection?.humidity ?? ""}" placeholder="Es. 62" />
+          </div>
+          <div class="field">
+            <label>Vento (km/h)</label>
+            <input id="iWind" type="number" step="1" value="${inspection?.wind ?? ""}" placeholder="Es. 8" />
+          </div>
+        </div>
+
+        <div class="field" style="margin-top:12px">
+          <label>Note</label>
+          <textarea id="iNotes" placeholder="Osservazioni, manutenzione, eventuale trattamento...">${escapeHtml(inspection?.notes||"")}</textarea>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <div class="field">
+            <label>Operatore</label>
+            <input id="iOp" value="${escapeHtml(inspection?.operator||"")}" placeholder="Es. Pietro" />
+          </div>
+          <div class="field">
+            <label>Foto (opzionale)</label>
+            <input id="iPhoto" type="file" accept="image/*" />
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-weight:700; margin-bottom:8px">Azioni</div>
+        <div class="row">
+          <button class="btn" id="iAutoFem">🧮 Stima femmine</button>
+          <button class="btn" id="iWeather">☁️ Meteo</button>
+          <button class="btn" id="iCheckAlerts">🔔 Verifica alert</button>
+        </div>
+        <hr class="sep"/>
+        ${weatherHint}
+        <div class="mini" id="iTrapInfo"></div>
+        <hr class="sep"/>
+        <div style="font-weight:700; margin-bottom:8px">Rischio attuale trappola</div>
+        <div class="mini" id="iRiskNow"></div>
+      </div>
+    </div>
+  `;
+
+  const footer = [
+    ...(isEdit ? [{ id:"iDelete", label:"Elimina", kind:"danger" }] : []),
+    { id:"iCancel", label:"Annulla" },
+    { id:"iSave", label: isEdit ? "Salva" : "Registra", kind:"primary" }
+  ];
+
+  openModal({ title: isEdit ? "Ispezione" : "Nuova ispezione", bodyHTML: body, footerButtons: footer });
+
+  function refreshSide(){
+    const trapId = $("#iTrap").value;
+    const t = state.traps.find(x=>x.id===trapId);
+    $("#iTrapInfo").innerHTML = t ? `
+      <b>${escapeHtml(t.name)}</b><br/>
+      ${escapeHtml(t.type||"")} • ${escapeHtml(t.bait||"")}<br/>
+      Stato: <span class="pill ${t.status==="Attiva"?"ok":(t.status==="In manutenzione"?"warn":"")}">${escapeHtml(t.status||"")}</span><br/>
+      <span class="mini">Lat/Lng: ${t.lat.toFixed(6)}, ${t.lng.toFixed(6)}</span>
+    ` : `<span class="mini">Seleziona una trappola.</span>`;
+
+    if(t){
+      const score = computeRiskForTrap(t.id);
+      const r = riskLabel(score);
+      $("#iRiskNow").innerHTML = `<span class="pill ${r.cls}">Rischio ${r.label} • ${score}</span>`;
+    }else{
+      $("#iRiskNow").innerHTML = `<span class="mini">—</span>`;
+    }
+  }
+  refreshSide();
+  $("#iTrap").onchange = refreshSide;
+
+  $("#iCancel").onclick = closeModal;
+
+  if(isEdit){
+    $("#iDelete").onclick = async ()=>{
+      if(!confirm("Eliminare l'ispezione?")) return;
+      await DB.delete("inspections", inspection.id);
+      toast("Eliminata", "Ispezione rimossa.");
+      await loadAll();
+      closeModal();
+      render();
+    };
+  }
+
+  $("#iAutoFem").onclick = ()=>{
+    const a = Number($("#iAdults").value||0);
+    const est = Math.round(a * 0.55);
+    $("#iFemales").value = est;
+    toast("Stima femmine", `Impostate a ${est} (55% degli adulti).`);
+  };
+
+  $("#iWeather").onclick = async ()=>{
+    const trapId = $("#iTrap").value;
+    const t = state.traps.find(x=>x.id===trapId);
+    if(!t){ toast("Trappola mancante", "Seleziona una trappola."); return; }
+    if(!navigator.onLine){ toast("Offline", "Connessione non disponibile."); return; }
+    if(!state.settings.enableWeather){ toast("Meteo disattivato", "Attivalo in impostazioni."); return; }
+    try{
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${t.lat}&longitude=${t.lng}&current=temperature_2m,relative_humidity_2m,wind_speed_10m`;
+      const res = await fetch(url);
+      const j = await res.json();
+      const c = j.current || {};
+      if(c.temperature_2m != null) $("#iTemp").value = c.temperature_2m;
+      if(c.relative_humidity_2m != null) $("#iHum").value = c.relative_humidity_2m;
+      if(c.wind_speed_10m != null) $("#iWind").value = c.wind_speed_10m;
+      toast("Meteo compilato", "Dati correnti da Open-Meteo.");
+    }catch(e){
+      toast("Errore meteo", "Impossibile recuperare dati.");
+    }
+  };
+
+  $("#iCheckAlerts").onclick = ()=>{
+    const adults = Number($("#iAdults").value||0);
+    const larvae = Number($("#iLarvae").value||0);
+    const hit = [];
+    for(const a of state.alerts.filter(x=>x.active)){
+      if(a.metric==="adults" && adults >= Number(a.threshold)) hit.push(a);
+      if(a.metric==="larvae" && larvae >= Number(a.threshold)) hit.push(a);
+    }
+    if(hit.length){
+      toast("Alert potenziali", hit.map(h=>h.name).join(" • "));
+    }else{
+      toast("Nessun alert", "Valori sotto soglia.");
+    }
+  };
+
+  $("#iSave").onclick = async ()=>{
+    const trapId = $("#iTrap").value;
+    if(!trapId){
+      toast("Trappola mancante", "Seleziona una trappola.");
+      return;
+    }
+
+    let photoDataUrl = inspection?.photoDataUrl || null;
+    const file = $("#iPhoto").files?.[0];
+    if(file){
+      photoDataUrl = await fileToDataUrl(file);
+    }
+
+    const obj = {
+      id: inspection?.id || uid("insp"),
+      trapId,
+      date: $("#iDate").value,
+      adults: Number($("#iAdults").value||0),
+      females: Number($("#iFemales").value||0),
+      larvae: Number($("#iLarvae").value||0),
+      temperature: $("#iTemp").value==="" ? null : Number($("#iTemp").value),
+      humidity: $("#iHum").value==="" ? null : Number($("#iHum").value),
+      wind: $("#iWind").value==="" ? null : Number($("#iWind").value),
+      notes: $("#iNotes").value.trim(),
+      operator: $("#iOp").value.trim(),
+      photoDataUrl
+    };
+
+    await DB.put("inspections", obj);
+    toast(isEdit ? "Salvata" : "Registrata", `Ispezione ${formatDate(obj.date)}`);
+
+    await loadAll();
+    closeModal();
+    render();
+
+    // Check alerts and notify
+    await evaluateAlertsOnInspection(obj);
+  };
+}
+
+async function openAlertModal(alert=null){
+  const isEdit = !!alert;
+
+  const body = `
+    <div class="row">
+      <div class="field">
+        <label>Nome</label>
+        <input id="aName" value="${escapeHtml(alert?.name||"")}" placeholder="Es. Soglia catture (adulti)" />
+      </div>
+      <div class="field">
+        <label>Metrica</label>
+        <select id="aMetric">
+          ${["adults","larvae","nearby"].map(x=>`<option value="${x}" ${alert?.metric===x?"selected":""}>${x}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label>Soglia</label>
+        <input id="aThr" type="number" step="1" value="${alert?.threshold ?? state.settings.defaultThreshold}" />
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <div class="field">
+        <label>Attiva</label>
+        <select id="aActive">
+          <option value="true" ${(alert?.active ?? true) ? "selected":""}>ON</option>
+          <option value="false" ${!(alert?.active ?? true) ? "selected":""}>OFF</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Scope</label>
+        <select id="aScope">
+          <option value="any" ${alert?.scope==="any"?"selected":""}>Qualsiasi trappola</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="field" style="margin-top:12px">
+      <label>Note</label>
+      <textarea id="aNote" placeholder="Contesto e istruzioni operative...">${escapeHtml(alert?.note||"")}</textarea>
+    </div>
+
+    <div class="mini" style="margin-top:10px">
+      <b>Metriche:</b><br/>
+      <b>adults</b> = adulti catturati in una singola ispezione<br/>
+      <b>larvae</b> = larve rilevate in una singola ispezione<br/>
+      <b>nearby</b> = vicinanza (m) quando apri la PWA (richiede posizione)
+    </div>
+  `;
+
+  const footer = [
+    ...(isEdit ? [{ id:"aDelete", label:"Elimina", kind:"danger" }] : []),
+    { id:"aCancel", label:"Annulla" },
+    { id:"aSave", label: isEdit ? "Salva" : "Crea", kind:"primary" }
+  ];
+
+  openModal({ title: isEdit ? "Regola alert" : "Nuova regola", bodyHTML: body, footerButtons: footer });
+
+  $("#aCancel").onclick = closeModal;
+  if(isEdit){
+    $("#aDelete").onclick = async ()=>{
+      if(!confirm("Eliminare la regola?")) return;
+      await DB.delete("alerts", alert.id);
+      toast("Eliminata", alert.name);
+      await loadAll();
+      closeModal();
+      render();
+    };
+  }
+  $("#aSave").onclick = async ()=>{
+    const name = $("#aName").value.trim();
+    if(!name){ toast("Nome mancante", "Inserisci un nome regola."); return; }
+    const obj = {
+      id: alert?.id || uid("al"),
+      name,
+      metric: $("#aMetric").value,
+      threshold: Number($("#aThr").value||0),
+      active: $("#aActive").value === "true",
+      scope: $("#aScope").value,
+      note: $("#aNote").value.trim()
+    };
+    await DB.put("alerts", obj);
+    toast(isEdit ? "Salvata" : "Creata", obj.name);
+    await loadAll();
+    closeModal();
+    render();
+  };
+}
+
+async function openMessageModal(msg=null){
+  const isEdit = !!msg;
+  const body = `
+    <div class="row">
+      <div class="field">
+        <label>Canale</label>
+        <select id="mChan">
+          ${["Team","Agronomo","Cooperativa","Personale"].map(x=>`<option ${msg?.channel===x?"selected":""}>${x}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label>Titolo</label>
+        <input id="mTitle" value="${escapeHtml(msg?.title||"")}" placeholder="Es. Allerta picco catture" />
+      </div>
+    </div>
+    <div class="field" style="margin-top:12px">
+      <label>Messaggio</label>
+      <textarea id="mBody" placeholder="Scrivi qui...">${escapeHtml(msg?.body||"")}</textarea>
+    </div>
+    <div class="field" style="margin-top:12px">
+      <label>Tag (virgola)</label>
+      <input id="mTags" value="${escapeHtml((msg?.tags||[]).join(", "))}" placeholder="es. intervento, blocco, meteo" />
+    </div>
+  `;
+  const footer = [
+    ...(isEdit ? [{ id:"mDelete", label:"Elimina", kind:"danger" }] : []),
+    { id:"mCancel", label:"Annulla" },
+    { id:"mSave", label: isEdit ? "Salva" : "Pubblica", kind:"primary" }
+  ];
+  openModal({ title: isEdit ? "Messaggio" : "Nuovo messaggio", bodyHTML: body, footerButtons: footer });
+
+  $("#mCancel").onclick = closeModal;
+  if(isEdit){
+    $("#mDelete").onclick = async ()=>{
+      if(!confirm("Eliminare il messaggio?")) return;
+      await DB.delete("messages", msg.id);
+      toast("Eliminato", msg.title);
+      await loadAll();
+      closeModal();
+      render();
+    };
+  }
+  $("#mSave").onclick = async ()=>{
+    const title = $("#mTitle").value.trim();
+    const body = $("#mBody").value.trim();
+    if(!title || !body){ toast("Campi mancanti", "Titolo e messaggio sono obbligatori."); return; }
+    const obj = {
+      id: msg?.id || uid("msg"),
+      date: msg?.date || new Date().toISOString(),
+      channel: $("#mChan").value,
+      title,
+      body,
+      tags: $("#mTags").value.split(",").map(s=>s.trim()).filter(Boolean)
+    };
+    await DB.put("messages", obj);
+    toast(isEdit ? "Salvato" : "Pubblicato", obj.title);
+    await loadAll();
+    closeModal();
+    render();
+  };
+}
+
+async function openReportModal(){
+  const report = buildReportText();
+  const body = `
+    <div class="split">
+      <div>
+        <div class="mini" style="margin-bottom:10px">Anteprima report (copiabile / condivisibile)</div>
+        <textarea id="rText" style="width:100%; min-height:320px">${escapeHtml(report)}</textarea>
+      </div>
+      <div>
+        <div style="font-weight:700; margin-bottom:8px">Azioni</div>
+        <div class="row">
+          <button class="btn" id="rCopy">📋 Copia</button>
+          <button class="btn primary" id="rShare">📤 Condividi</button>
+          <button class="btn" id="rCSV">⬇️ CSV ispezioni</button>
+        </div>
+        <hr class="sep"/>
+        <div class="mini">
+          In produzione: invio automatico a mailing list / Teams, firma digitale, allegati foto.
+        </div>
+      </div>
+    </div>
+  `;
+  openModal({
+    title: "Report operativo",
+    bodyHTML: body,
+    footerButtons: [{ id:"rClose", label:"Chiudi" }]
+  });
+
+  $("#rClose").onclick = closeModal;
+  $("#rCopy").onclick = async ()=>{
+    try{
+      await navigator.clipboard.writeText($("#rText").value);
+      toast("Copiato", "Report copiato in clipboard.");
+    }catch(e){
+      toast("Errore", "Clipboard non disponibile. Seleziona e copia manualmente.");
+    }
+  };
+  $("#rShare").onclick = async ()=>{
+    const text = $("#rText").value;
+    if(navigator.share){
+      try{
+        await navigator.share({ title:"Report OliveFly Sentinel", text });
+        toast("Condiviso", "Report inviato.");
+      }catch(e){ /* cancelled */ }
+    }else{
+      toast("Web Share non disponibile", "Copia e incolla su WhatsApp/Email.");
+    }
+  };
+  $("#rCSV").onclick = ()=>{
+    const rows = state.inspections.map(i=>{
+      const t = state.traps.find(x=>x.id===i.trapId);
+      return {
+        date: i.date,
+        trap: t?.name || "",
+        adults: i.adults,
+        females: i.females,
+        larvae: i.larvae,
+        temperature: i.temperature ?? "",
+        humidity: i.humidity ?? "",
+        wind: i.wind ?? "",
+        notes: i.notes ?? ""
+      };
+    });
+    downloadText("inspections.csv", toCSV(rows), "text/csv");
+  };
+}
+
+function buildReportText(){
+  const now = new Date();
+  const last7 = state.inspections.filter(i => i.date >= daysAgoISO(6));
+  const byTrap = {};
+  for(const i of last7){
+    byTrap[i.trapId] = byTrap[i.trapId] || { adults:0, larvae:0, n:0 };
+    byTrap[i.trapId].adults += i.adults;
+    byTrap[i.trapId].larvae += i.larvae;
+    byTrap[i.trapId].n += 1;
+  }
+  const lines = [];
+  lines.push(`OLIVEFLY SENTINEL — Report operativo`);
+  lines.push(`Data: ${now.toLocaleString("it-IT")}`);
+  lines.push(`Periodo: ultimi 7 giorni (da ${formatDate(daysAgoISO(6))} a ${formatDate(todayISO())})`);
+  lines.push("");
+  lines.push(`Trappole: ${state.traps.length} | Ispezioni periodo: ${last7.length}`);
+  const avg = last7.length ? (last7.reduce((s,i)=>s+i.adults,0)/last7.length) : 0;
+  const larvaeHits = last7.filter(i=>i.larvae>0).length;
+  lines.push(`Media adulti per ispezione: ${avg.toFixed(1)} | Rilevazioni larve: ${larvaeHits}`);
+  lines.push("");
+  lines.push(`DETTAGLIO PER TRAPPOLA`);
+  for(const t of state.traps){
+    const d = byTrap[t.id];
+    const score = computeRiskForTrap(t.id);
+    const r = riskLabel(score);
+    if(!d) continue;
+    const avgA = d.n ? (d.adults/d.n).toFixed(1) : "0.0";
+    lines.push(`- ${t.name} (${t.code||"-"}) — Rischio ${r.label} (${score})`);
+    lines.push(`  Ispezioni: ${d.n} | Somma adulti: ${d.adults} | Media adulti: ${avgA} | Somma larve: ${d.larvae}`);
+  }
+  lines.push("");
+  lines.push("NOTE OPERATIVE (suggerite)");
+  const suggestions = suggestActions();
+  for(const s of suggestions) lines.push(`- ${s}`);
+  lines.push("");
+  lines.push("Generato con OliveFly Sentinel (demo PWA).");
+  return lines.join("\n");
+}
+
+function suggestActions(){
+  const sug = [];
+  // Identify top risk traps
+  const ranked = state.traps.map(t=>({t, score: computeRiskForTrap(t.id)})).sort((a,b)=>b.score-a.score);
+  const top = ranked.slice(0,3).filter(x=>x.score>=45);
+  if(top.length){
+    sug.push(`Verificare le trappole ad alto rischio: ${top.map(x=>x.t.name).join(", ")} (aumentare frequenza controlli).`);
+  }else{
+    sug.push("Trend complessivamente sotto controllo: mantenere cadenza ispezioni e sostituzione esche.");
+  }
+  const larvae = state.inspections.filter(i=>i.date>=daysAgoISO(6) && i.larvae>0);
+  if(larvae.length){
+    sug.push("Presenza larve: valutare intervento mirato e verifica integrità frutti nelle aree interessate.");
+  }
+  const high = state.inspections.filter(i=>i.date>=daysAgoISO(6) && i.adults>=5);
+  if(high.length){
+    sug.push("Picchi di adulti: controllare attrattivo, posizionamento e possibile incremento pressione (meteo/umidità).");
+  }
+  sug.push("Se disponibile: integrare meteo giornaliero e fenologia per un modello rischio più robusto.");
+  return sug;
+}
+
+function renderSuggestions(){
+  const html = `<ul class="mini">${suggestActions().map(s=>`<li>${escapeHtml(s)}</li>`).join("")}</ul>`;
+  const box = $("#suggestBox");
+  if(box) box.innerHTML = html;
+}
+
+// ---------- Data import/export ----------
+async function exportData(all=false){
+  const payload = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    traps: state.traps,
+    inspections: state.inspections,
+    alerts: state.alerts,
+    messages: state.messages,
+    settings: state.settings
+  };
+  const name = all ? "olivefly_backup.json" : "olivefly_data.json";
+  downloadText(name, JSON.stringify(payload, null, 2), "application/json");
+  toast("Export", "File JSON generato.");
+}
+
+async function importData(all=false){
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "application/json";
+  input.onchange = async ()=>{
+    const file = input.files?.[0];
+    if(!file) return;
+    try{
+      const text = await file.text();
+      const j = JSON.parse(text);
+
+      if(all){
+        if(!confirm("Import completo: sovrascrive i dati locali. Continuare?")) return;
+        await DB.clear("traps");
+        await DB.clear("inspections");
+        await DB.clear("alerts");
+        await DB.clear("messages");
+      }
+
+      for(const t of (j.traps||[])) await DB.put("traps", t);
+      for(const i of (j.inspections||[])) await DB.put("inspections", i);
+      for(const a of (j.alerts||[])) await DB.put("alerts", a);
+      for(const m of (j.messages||[])) await DB.put("messages", m);
+      if(j.settings) { state.settings = { ...state.settings, ...j.settings }; await DB.setSetting("app_settings", state.settings); }
+
+      toast("Import completato", "Dati caricati.");
+      await loadAll();
+      render();
+    }catch(e){
+      toast("Import fallito", "JSON non valido.");
+    }
+  };
+  input.click();
+}
+
+async function resetDemo(){
+  if(!confirm("Reset demo: elimina dati locali e rigenera seed. Continuare?")) return;
+  await DB.clear("traps");
+  await DB.clear("inspections");
+  await DB.clear("alerts");
+  await DB.clear("messages");
+  await DB.setSetting("app_settings", null);
+  state.map = { obj:null, layer:null, markers:[] };
+  await loadAll();
+  render();
+  toast("Reset", "Demo rigenerata.");
+}
+
+// ---------- Alerts evaluation ----------
+async function evaluateAlertsOnInspection(insp){
+  const hits = [];
+  for(const a of state.alerts.filter(x=>x.active)){
+    if(a.metric==="adults" && insp.adults >= Number(a.threshold)) hits.push(a);
+    if(a.metric==="larvae" && insp.larvae >= Number(a.threshold)) hits.push(a);
+  }
+  if(!hits.length) return;
+
+  const t = state.traps.find(x=>x.id===insp.trapId);
+  const title = "OliveFly Sentinel — Alert";
+  const body = `${t? t.name : "Trappola"} • ${formatDate(insp.date)} • ${hits.map(h=>h.name).join(", ")}`;
+  toast("Alert", body);
+  pushNotification(title, body);
+
+  // Log message
+  await DB.put("messages", {
+    id: uid("msg"),
+    date: new Date().toISOString(),
+    channel: "Team",
+    title: "Alert automatico",
+    body: body + "\n" + (hits.map(h=>`- ${h.note||h.name}`).join("\n")),
+    tags: ["alert","auto"]
+  });
+  state.messages = await DB.getAll("messages");
+}
+
+async function evaluateNearbyAlerts(){
+  if(!state.settings.enableNearbyAlert) return;
+  const nearRule = state.alerts.find(a=>a.active && a.metric==="nearby");
+  if(!nearRule) return;
+  const pos = await requestLocation({silent:true});
+  if(!pos) return;
+  const nearby = computeNearbyTraps();
+  if(!nearby.length) return;
+
+  const top = nearby[0];
+  const title = "Trappola vicina";
+  const body = `${top.name} a ~${Math.round(top.dist)}m. Vuoi registrare un'ispezione?`;
+  toast(title, body);
+  pushNotification("OliveFly Sentinel — " + title, body);
+}
+
+// ---------- Share log ----------
+async function shareLog(){
+  const last = [...state.messages].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10);
+  const text = last.map(m=>`• [${new Date(m.date).toLocaleString("it-IT")}] ${m.channel} — ${m.title}\n${m.body}`).join("\n\n");
+  if(navigator.share){
+    try{ await navigator.share({ title:"OliveFly Sentinel — Log", text }); toast("Condiviso", "Log inviato."); }catch(e){}
+  }else{
+    try{ await navigator.clipboard.writeText(text); toast("Copiato", "Log copiato in clipboard."); }catch(e){
+      toast("Non supportato", "Copia manuale dalla schermata.");
+    }
+  }
+}
+
+// ---------- Charts ----------
+function destroyChart(ch){
+  try{ if(ch) ch.destroy(); }catch(e){}
+}
+function drawCharts(){
+  // Weekly sums last 28 days
+  const labels = [];
+  const values = [];
+  for(let w=3; w>=0; w--){
+    const start = new Date(); start.setDate(start.getDate() - (w*7+6));
+    const end = new Date(); end.setDate(end.getDate() - (w*7));
+    const sIso = start.toISOString().slice(0,10);
+    const eIso = end.toISOString().slice(0,10);
+    const bucket = state.inspections.filter(i=>i.date>=sIso && i.date<=eIso);
+    const sumAdults = bucket.reduce((s,i)=>s+i.adults,0);
+    labels.push(`${formatDate(sIso)} → ${formatDate(eIso)}`);
+    values.push(sumAdults);
+  }
+
+  const ctxW = $("#chWeekly");
+  if(ctxW){
+    destroyChart(state.charts.weekly);
+    state.charts.weekly = new Chart(ctxW, {
+      type: "line",
+      data: { labels, datasets: [{ label: "Adulti (somma)", data: values, tension: 0.25 }] },
+      options: { responsive:true, plugins:{ legend:{ display:true } }, scales:{ y:{ beginAtZero:true } } }
+    });
+  }
+
+  // By trap last 14 days
+  const fromIso = daysAgoISO(13);
+  const insps = state.inspections.filter(i=>i.date>=fromIso);
+  const sums = {};
+  for(const i of insps){
+    sums[i.trapId] = (sums[i.trapId]||0) + i.adults;
+  }
+  const tLabels = state.traps.map(t=>t.name);
+  const tValues = state.traps.map(t=>sums[t.id]||0);
+  const ctxT = $("#chByTrap");
+  if(ctxT){
+    destroyChart(state.charts.byTrap);
+    state.charts.byTrap = new Chart(ctxT, {
+      type: "bar",
+      data: { labels: tLabels, datasets: [{ label: "Adulti (ultimi 14 gg)", data: tValues }] },
+      options: { responsive:true, plugins:{ legend:{ display:true } }, scales:{ y:{ beginAtZero:true } } }
+    });
+  }
+
+  // Risk radar-ish: use bar
+  const rLabels = state.traps.map(t=>t.name);
+  const rValues = state.traps.map(t=>computeRiskForTrap(t.id));
+  const ctxR = $("#chRisk");
+  if(ctxR){
+    destroyChart(state.charts.risk);
+    state.charts.risk = new Chart(ctxR, {
+      type: "bar",
+      data: { labels: rLabels, datasets: [{ label: "Risk score (0-100)", data: rValues }] },
+      options: { responsive:true, plugins:{ legend:{ display:true } }, scales:{ y:{ beginAtZero:true, max:100 } } }
+    });
+  }
+
+  // risk table
+  const box = $("#riskTable");
+  if(box){
+    const rows = state.traps
+      .map(t=>({ t, score: computeRiskForTrap(t.id) }))
+      .sort((a,b)=>b.score-a.score)
+      .slice(0,8);
+    box.innerHTML = `
+      <table class="table">
+        <thead><tr><th>Trappola</th><th>Rischio</th></tr></thead>
+        <tbody>
+          ${rows.map(x=>{
+            const r = riskLabel(x.score);
+            return `<tr><td>${escapeHtml(x.t.name)}</td><td><span class="pill ${r.cls}">${r.label} • ${x.score}</span></td></tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    `;
+  }
+  renderSuggestions();
+}
+
+// ---------- File helpers ----------
+function downloadText(filename, text, mime){
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+}
+
+function fileToDataUrl(file){
+  return new Promise((resolve, reject)=>{
+    const r = new FileReader();
+    r.onload = ()=> resolve(r.result);
+    r.onerror = ()=> reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
+// ---------- Global controls ----------
+$("#search").addEventListener("input", (e)=>{
+  state.q = e.target.value;
+  render();
+});
+
+$("#btnHamburger").onclick = ()=>{
+  $("#sidebar").classList.toggle("open");
+};
+
+$("#btnLocate").onclick = async ()=>{
+  await requestLocation();
+  if(state.route==="map") drawMapMarkers();
+  render();
+};
+
+$("#btnQuickInspect").onclick = ()=>{
+  openInspectionModal();
+};
+
+window.addEventListener("hashchange", ()=> render());
+
+// Register service worker
+if("serviceWorker" in navigator){
+  window.addEventListener("load", async ()=>{
+    try{
+      await navigator.serviceWorker.register("./sw.js");
+    }catch(e){
+      // ignore
+    }
+  });
+}
+
+// Init
+(async function init(){
+  await loadAll();
+  render();
+
+  // Soft prompts
+  setTimeout(()=> toast("Demo pronta", "Vai su Trappole → Apri una trappola → Ispezione."), 700);
+
+  // Evaluate nearby alert on launch
+  setTimeout(()=> evaluateNearbyAlerts(), 900);
+})();

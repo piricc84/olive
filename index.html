@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#00C8A0" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icons/favicon.png" />
+  <title>OliveFly Sentinel</title>
+
+  <!-- Leaflet (map) + Chart.js (analytics) via CDN (demo) -->
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+</head>
+<body>
+  <div class="app">
+    <aside id="sidebar" class="sidebar">
+      <div class="brand">
+        <img src="icons/icon-192.png" alt="Logo" />
+        <div>
+          <h1>OliveFly Sentinel</h1>
+          <p>Trappole • Ispezioni • Alert • Report</p>
+        </div>
+      </div>
+
+      <nav class="nav" id="nav">
+        <a href="#/dashboard" data-route="dashboard">
+          <span>📊 Dashboard</span>
+        </a>
+        <a href="#/map" data-route="map">
+          <span>🗺️ Mappa</span>
+          <span class="badge" id="badgeNearby">0</span>
+        </a>
+        <a href="#/traps" data-route="traps">
+          <span>🪤 Trappole</span>
+        </a>
+        <a href="#/inspections" data-route="inspections">
+          <span>🧾 Ispezioni</span>
+        </a>
+        <a href="#/analytics" data-route="analytics">
+          <span>📈 Analisi</span>
+        </a>
+        <a href="#/alerts" data-route="alerts">
+          <span>🔔 Alert</span>
+          <span class="badge" id="badgeAlerts">0</span>
+        </a>
+        <a href="#/messages" data-route="messages">
+          <span>💬 Comunicazioni</span>
+        </a>
+        <a href="#/settings" data-route="settings">
+          <span>⚙️ Impostazioni</span>
+        </a>
+        <a href="#/about" data-route="about">
+          <span>ℹ️ Info</span>
+        </a>
+      </nav>
+
+      <div style="margin-top:14px; padding:12px; border-radius:16px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06)">
+        <div class="mini">
+          <strong style="color:#E7EEF7">Tip rapido</strong><br/>
+          Aggiungi una trappola dalla sezione <b>Trappole</b>, poi registra un'ispezione. Gli alert scattano su soglie e “vicinanza” quando apri la PWA.
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar">
+        <div class="left">
+          <button class="hamburger" id="btnHamburger">☰</button>
+          <div class="search">
+            <span style="opacity:.9">🔎</span>
+            <input id="search" placeholder="Cerca (nome trappola, note, tag)..." />
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn" id="btnLocate">📍 Posizione</button>
+          <button class="btn primary" id="btnQuickInspect">➕ Ispezione rapida</button>
+        </div>
+      </div>
+
+      <div id="view"></div>
+
+      <div class="toast" id="toast"></div>
+    </main>
+  </div>
+
+  <div id="modalRoot" class="hidden"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
