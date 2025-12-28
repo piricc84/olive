@@ -1915,6 +1915,7 @@ $("#search").addEventListener("input", (e)=>{
 
 $("#btnHamburger").onclick = ()=>{
   $("#sidebar").classList.toggle("open");
+  setTimeout(()=>{ try{ state.map.obj && state.map.obj.invalidateSize(); }catch(e){} }, 300);
 };
 
 $("#btnLocate").onclick = async ()=>{
@@ -1928,6 +1929,35 @@ $("#btnQuickInspect").onclick = ()=>{
 };
 
 window.addEventListener("hashchange", ()=> render());
+
+// Mobile FAB + responsive map handling (adds FAB/menu dynamically)
+(function ensureMobileUI(){
+  if(typeof document === 'undefined') return;
+  if(!document.getElementById('fabAction')){
+    const fab = document.createElement('button');
+    fab.id = 'fabAction'; fab.className = 'fab'; fab.setAttribute('aria-label','Azioni rapide'); fab.innerText = '➕';
+    const menu = document.createElement('div'); menu.id = 'fabMenu'; menu.className = 'fab-menu'; menu.setAttribute('aria-hidden','true');
+    const b1 = document.createElement('button'); b1.id='fabAddTrap'; b1.className='btn'; b1.innerText='➕ Aggiungi trappola';
+    const b2 = document.createElement('button'); b2.id='fabQuickInspectMenu'; b2.className='btn primary'; b2.innerText='🧾 Ispezione rapida';
+    menu.appendChild(b1); menu.appendChild(b2);
+    document.body.appendChild(menu); document.body.appendChild(fab);
+
+    fab.addEventListener('click', (e)=>{
+      e.stopPropagation(); menu.classList.toggle('open');
+    });
+    b1.addEventListener('click', ()=>{ openTrapModal(); menu.classList.remove('open'); });
+    b2.addEventListener('click', ()=>{ openInspectionModal(); menu.classList.remove('open'); });
+    document.addEventListener('click', (e)=>{ if(!menu.contains(e.target) && e.target !== fab) menu.classList.remove('open'); });
+
+    const mq = window.matchMedia('(max-width:980px)');
+    const updateFab = ()=>{ if(mq.matches){ fab.style.display='flex'; } else { fab.style.display='none'; menu.classList.remove('open'); } };
+    if(mq.addEventListener) mq.addEventListener('change', updateFab); else mq.addListener(updateFab);
+    updateFab();
+  }
+
+  window.addEventListener('resize', ()=>{ try{ state.map.obj && state.map.obj.invalidateSize(); }catch(e){} });
+  window.addEventListener('orientationchange', ()=>{ try{ state.map.obj && state.map.obj.invalidateSize(); }catch(e){} });
+})();
 
 // Register service worker
 if("serviceWorker" in navigator){

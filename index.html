@@ -11,6 +11,7 @@
   <!-- Leaflet (map) + Chart.js (analytics) via CDN (demo) -->
   <link rel="preconnect" href="https://unpkg.com" crossorigin>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <link rel="stylesheet" href="mobile.css" />
 </head>
 <body>
   <div class="app">
@@ -82,6 +83,12 @@
 
       <div class="toast" id="toast"></div>
     </main>
+  </div>
+
+  <button id="fabAction" class="fab" aria-label="Azioni rapide">➕</button>
+  <div id="fabMenu" class="fab-menu" aria-hidden="true">
+    <button id="fabAddTrap" class="btn">➕ Aggiungi trappola</button>
+    <button id="fabQuickInspectMenu" class="btn primary">🧾 Ispezione rapida</button>
   </div>
 
   <div id="modalRoot" class="hidden"></div>
