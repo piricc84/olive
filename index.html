@@ -2,10 +2,15 @@
 <html lang="it">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#00C8A0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#6BB28E" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="OliveFly" />
+  <meta name="format-detection" content="telephone=no" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="icons/favicon.png" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <title>OliveFly Sentinel</title>
 
   <!-- Leaflet (map) + Chart.js (analytics) via CDN (demo) -->
@@ -25,38 +30,47 @@
       </div>
 
       <nav class="nav" id="nav">
-        <a href="#/dashboard" data-route="dashboard">
-          <span>📊 Dashboard</span>
-        </a>
-        <a href="#/map" data-route="map">
-          <span>🗺️ Mappa</span>
-          <span class="badge" id="badgeNearby">0</span>
-        </a>
-        <a href="#/traps" data-route="traps">
-          <span>🪤 Trappole</span>
-        </a>
-        <a href="#/inspections" data-route="inspections">
-          <span>🧾 Ispezioni</span>
-        </a>
-        <a href="#/analytics" data-route="analytics">
-          <span>📈 Analisi</span>
-        </a>
-        <a href="#/alerts" data-route="alerts">
-          <span>🔔 Alert</span>
-          <span class="badge" id="badgeAlerts">0</span>
-        </a>
-        <a href="#/messages" data-route="messages">
-          <span>💬 Comunicazioni</span>
-        </a>
-        <a href="#/settings" data-route="settings">
-          <span>⚙️ Impostazioni</span>
-        </a>
-        <a href="#/about" data-route="about">
-          <span>ℹ️ Info</span>
-        </a>
+        <div class="nav-group">
+          <p class="nav-label">Panoramica</p>
+          <a href="#/dashboard" data-route="dashboard">
+            <span>📊 Dashboard</span>
+          </a>
+          <a href="#/map" data-route="map">
+            <span>🗺️ Mappa</span>
+            <span class="badge" id="badgeNearby">0</span>
+          </a>
+        </div>
+        <div class="nav-group">
+          <p class="nav-label">Operatività</p>
+          <a href="#/traps" data-route="traps">
+            <span>🪤 Trappole</span>
+          </a>
+          <a href="#/inspections" data-route="inspections">
+            <span>🧾 Ispezioni</span>
+          </a>
+          <a href="#/analytics" data-route="analytics">
+            <span>📈 Analisi</span>
+          </a>
+          <a href="#/alerts" data-route="alerts">
+            <span>🔔 Alert</span>
+            <span class="badge" id="badgeAlerts">0</span>
+          </a>
+        </div>
+        <div class="nav-group">
+          <p class="nav-label">Comunicazioni</p>
+          <a href="#/messages" data-route="messages">
+            <span>💬 Comunicazioni</span>
+          </a>
+          <a href="#/settings" data-route="settings">
+            <span>⚙️ Impostazioni</span>
+          </a>
+          <a href="#/about" data-route="about">
+            <span>ℹ️ Info</span>
+          </a>
+        </div>
       </nav>
 
-      <div style="margin-top:14px; padding:12px; border-radius:16px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06)">
+      <div class="sidebar-tip">
         <div class="mini">
           <strong style="color:#E7EEF7">Tip rapido</strong><br/>
           Aggiungi una trappola dalla sezione <b>Trappole</b>, poi registra un'ispezione. Gli alert scattano su soglie e “vicinanza” quando apri la PWA.

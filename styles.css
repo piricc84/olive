@@ -1,15 +1,15 @@
 :root{
-  --bg:#0E121C;
-  --panel:#111827;
-  --card:#0B1220;
-  --muted:#93A4B7;
-  --text:#E7EEF7;
-  --primary:#00C8A0;
-  --primary2:#00A3FF;
-  --warn:#FFB020;
-  --danger:#FF4D6D;
-  --ok:#3EE282;
-  --shadow: 0 14px 40px rgba(0,0,0,.35);
+  --bg:#0f1720;
+  --panel:#101a24;
+  --card:#0d1521;
+  --muted:#b5c3d2;
+  --text:#f2f6fa;
+  --primary:#6bb28e;
+  --primary2:#7fb5ff;
+  --warn:#f5c26b;
+  --danger:#ff788a;
+  --ok:#58d3a2;
+  --shadow: 0 14px 36px rgba(3,12,24,.35);
   --radius: 18px;
 }
 
@@ -19,9 +19,9 @@ body{
   margin:0;
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
   background:
-    radial-gradient(1200px 800px at 20% -10%, rgba(0,200,160,.22), transparent 55%),
-    radial-gradient(1000px 700px at 110% 20%, rgba(0,163,255,.18), transparent 55%),
-    radial-gradient(900px 600px at 40% 120%, rgba(255,176,32,.10), transparent 55%),
+    radial-gradient(1200px 800px at 18% -10%, rgba(107,178,142,.22), transparent 52%),
+    radial-gradient(1200px 720px at 86% 12%, rgba(127,181,255,.16), transparent 55%),
+    radial-gradient(1000px 620px at 40% 115%, rgba(245,194,107,.12), transparent 58%),
     var(--bg);
   color:var(--text);
   overflow-x:hidden;
@@ -42,8 +42,8 @@ button, input, select, textarea{font:inherit}
   top:0;
   height:100vh;
   padding:18px;
-  border-right: 1px solid rgba(255,255,255,.06);
-  background: linear-gradient(180deg, rgba(17,24,39,.92), rgba(11,18,32,.86));
+  border-right: 1px solid rgba(255,255,255,.08);
+  background: linear-gradient(180deg, rgba(16,26,36,.95), rgba(13,21,33,.88));
   backdrop-filter: blur(10px);
 }
 
@@ -51,7 +51,7 @@ button, input, select, textarea{font:inherit}
   display:flex; align-items:center; gap:12px;
   padding:12px 12px;
   border-radius: 16px;
-  background: rgba(255,255,255,.03);
+  background: linear-gradient(135deg, rgba(107,178,142,.12), rgba(127,181,255,.08));
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
 }
 .brand img{width:44px;height:44px;border-radius:14px}
@@ -62,32 +62,46 @@ button, input, select, textarea{font:inherit}
   margin-top:14px;
   display:flex;
   flex-direction:column;
-  gap:8px;
+  gap:12px;
 }
+.nav-group{display:flex; flex-direction:column; gap:8px;}
+.nav-label{margin:0 4px; font-size:11px; letter-spacing: .04em; text-transform: uppercase; color: rgba(181,195,210,.7);}
 .nav a{
   display:flex; align-items:center; gap:10px;
-  padding:11px 12px;
+  padding:12px 12px;
   border-radius: 14px;
   text-decoration:none;
   color:var(--muted);
-  background: transparent;
+  background: rgba(255,255,255,.02);
   transition: .18s ease;
-  border:1px solid rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.07);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.02);
 }
-.nav a:hover{transform:translateY(-1px); color:var(--text); border-color: rgba(0,200,160,.30)}
+.nav a:hover{transform:translateY(-1px); color:var(--text); border-color: rgba(107,178,142,.32); box-shadow: inset 0 0 0 1px rgba(255,255,255,.06)}
 .nav a.active{
   color:var(--text);
-  background: linear-gradient(135deg, rgba(0,200,160,.16), rgba(0,163,255,.10));
-  border-color: rgba(0,200,160,.30);
+  background: linear-gradient(135deg, rgba(107,178,142,.18), rgba(127,181,255,.12));
+  border-color: rgba(107,178,142,.36);
+  box-shadow: 0 10px 24px rgba(0,0,0,.25), inset 0 0 0 1px rgba(255,255,255,.07);
 }
 
 .nav .badge{
   margin-left:auto;
   font-size:12px;
-  padding:2px 8px;
+  padding:3px 9px;
   border-radius:999px;
-  background: rgba(255,255,255,.06);
+  background: rgba(255,255,255,.08);
   color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+}
+
+.sidebar-tip{
+  margin-top:14px;
+  padding:12px;
+  border-radius:16px;
+  background: linear-gradient(145deg, rgba(107,178,142,.12), rgba(127,181,255,.08));
+  border:1px solid rgba(255,255,255,.08);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.02);
 }
 
 .main{
@@ -107,7 +121,7 @@ button, input, select, textarea{font:inherit}
 .hamburger{
   display:none;
   border:1px solid rgba(255,255,255,.08);
-  background: rgba(255,255,255,.03);
+  background: rgba(255,255,255,.04);
   color: var(--text);
   border-radius: 14px;
   padding: 10px 12px;
@@ -118,9 +132,10 @@ button, input, select, textarea{font:inherit}
   display:flex; align-items:center; gap:10px;
   padding: 10px 12px;
   border-radius: 14px;
-  border:1px solid rgba(255,255,255,.08);
-  background: rgba(255,255,255,.03);
+  border:1px solid rgba(255,255,255,.09);
+  background: rgba(255,255,255,.035);
   min-width: 240px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.02);
 }
 .search input{
   border:0; outline:0; background:transparent; color:var(--text);
@@ -131,17 +146,19 @@ button, input, select, textarea{font:inherit}
 }
 .btn{
   border:1px solid rgba(255,255,255,.10);
-  background: rgba(255,255,255,.03);
+  background: rgba(255,255,255,.035);
   color: var(--text);
   border-radius: 14px;
   padding: 10px 12px;
   cursor:pointer;
   transition:.18s ease;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.02);
 }
-.btn:hover{transform: translateY(-1px); border-color: rgba(0,200,160,.35)}
+.btn:hover{transform: translateY(-1px); border-color: rgba(107,178,142,.34)}
 .btn.primary{
-  background: linear-gradient(135deg, rgba(0,200,160,.22), rgba(0,163,255,.14));
-  border-color: rgba(0,200,160,.35);
+  background: linear-gradient(135deg, rgba(107,178,142,.22), rgba(127,181,255,.14));
+  border-color: rgba(107,178,142,.36);
+  box-shadow: 0 10px 22px rgba(0,0,0,.22), inset 0 0 0 1px rgba(255,255,255,.06);
 }
 .btn.danger{border-color: rgba(255,77,109,.40)}
 .btn.warn{border-color: rgba(255,176,32,.45)}
@@ -154,7 +171,7 @@ button, input, select, textarea{font:inherit}
 }
 .card{
   grid-column: span 12;
-  background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
+  background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.028));
   border: 1px solid rgba(255,255,255,.08);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
@@ -180,8 +197,8 @@ button, input, select, textarea{font:inherit}
   grid-column: span 3;
   padding:14px 14px;
   border-radius: var(--radius);
-  background: linear-gradient(135deg, rgba(0,200,160,.16), rgba(0,163,255,.10));
-  border: 1px solid rgba(0,200,160,.26);
+  background: linear-gradient(135deg, rgba(107,178,142,.16), rgba(127,181,255,.10));
+  border: 1px solid rgba(107,178,142,.26);
   box-shadow: var(--shadow);
 }
 .kpi .label{color:var(--muted);font-size:12px}

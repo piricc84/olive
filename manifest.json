@@ -1,10 +1,10 @@
 {
   "name": "OliveFly Sentinel",
   "short_name": "OliveFly",
-  "start_url": "./index.html",
+  "start_url": "./",
   "display": "standalone",
-  "background_color": "#0E121C",
-  "theme_color": "#00C8A0",
+  "background_color": "#0f1720",
+  "theme_color": "#6bb28e",
   "icons": [
     {
       "src": "icons/icon-192.png",

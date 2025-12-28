@@ -1,4 +1,5 @@
 import { DB, uid, todayISO, clamp } from "./db.js";
+import { demoTraps, demoInspections, demoAlerts, demoMessages } from "./seed-data.js";
 
 const $ = (sel, root=document) => root.querySelector(sel);
 const $$ = (sel, root=document) => [...root.querySelectorAll(sel)];
@@ -77,60 +78,26 @@ async function loadAll(){
 }
 
 async function seedDemo(){
-  const now = new Date();
-  const center = { lat: 41.125, lng: 16.87 }; // Bari-ish demo coordinate
-  const traps = [
-    { id: uid("trap"), name:"Trappola A — Coratina", code:"A-001", lat:center.lat+0.004, lng:center.lng+0.006, type:"Cromotropica", bait:"Attrattivo ammoniacale", installDate: todayISO(), status:"Attiva", tags:["coratina","collina"], notes:"Zona ventosa; sostituire pannello ogni 14 gg" },
-    { id: uid("trap"), name:"Trappola B — Leccino", code:"B-002", lat:center.lat-0.003, lng:center.lng+0.002, type:"Feromonica", bait:"Feromone + ammonio", installDate: todayISO(), status:"Attiva", tags:["leccino","pianura"], notes:"Controllare dopo pioggia" },
-    { id: uid("trap"), name:"Trappola C — Area test", code:"C-003", lat:center.lat+0.001, lng:center.lng-0.006, type:"Cromotropica", bait:"Attrattivo proteico", installDate: todayISO(), status:"In manutenzione", tags:["test"], notes:"Sensore in prova (demo)" }
-  ];
-  for(const t of traps) await DB.put("traps", t);
-
-  // Inspections over last 21 days
-  const trapIds = traps.map(t=>t.id);
-  for(let i=0;i<22;i++){
-    const d = new Date(now.getTime() - (21-i)*24*3600*1000);
-    const date = d.toISOString().slice(0,10);
-    for(const trapId of trapIds){
-      if(Math.random() < 0.55) continue;
-      const adults = Math.floor(Math.random()*8);
-      const females = Math.floor(adults * (0.35 + Math.random()*0.35));
-      const larvae = Math.random()<0.25 ? Math.floor(Math.random()*3) : 0;
-      const temp = 18 + Math.random()*12;
-      const hum = 45 + Math.random()*35;
-      const wind = 2 + Math.random()*10;
-      await DB.put("inspections", {
-        id: uid("insp"),
-        trapId,
-        date,
-        adults,
-        females,
-        larvae,
-        temperature: Math.round(temp*10)/10,
-        humidity: Math.round(hum),
-        wind: Math.round(wind),
-        notes: adults>=6 ? "Picco: valutare intervento" : (adults>=3 ? "Trend in crescita" : "Nella norma"),
-        operator: "Pietro (demo)",
-        photoDataUrl: null
-      });
-    }
+  const trapIdByCode = new Map();
+  for(const t of demoTraps){
+    const id = uid("trap");
+    trapIdByCode.set(t.code, id);
+    await DB.put("traps", { ...t, id });
   }
 
-  // Alerts
-  const alert1 = { id: uid("al"), name:"Soglia catture (adulti)", metric:"adults", threshold: 5, active: true, scope:"any", note:"Notifica quando una singola ispezione supera 5 adulti" };
-  const alert2 = { id: uid("al"), name:"Presenza larve", metric:"larvae", threshold: 1, active: true, scope:"any", note:"Notifica alla prima larva rilevata" };
-  const alert3 = { id: uid("al"), name:"Trappole vicine (200m)", metric:"nearby", threshold: state.settings.nearRadiusM, active: true, scope:"any", note:"Avvisa se sei vicino a una trappola quando apri la PWA" };
-  for(const a of [alert1, alert2, alert3]) await DB.put("alerts", a);
+  for(const insp of demoInspections){
+    const trapId = trapIdByCode.get(insp.code);
+    if(!trapId) continue;
+    await DB.put("inspections", { ...insp, id: uid("insp"), trapId, photoDataUrl: null });
+  }
 
-  // Messages
-  await DB.put("messages", {
-    id: uid("msg"),
-    date: new Date().toISOString(),
-    channel: "Team",
-    title: "Kickoff monitoraggio",
-    body: "Demo: aggiungi trappole, registra ispezioni, genera report e condividilo su WhatsApp/Email.",
-    tags: ["demo", "operativo"]
-  });
+  for(const a of demoAlerts){
+    await DB.put("alerts", { ...a, id: uid("al") });
+  }
+
+  for(const msg of demoMessages){
+    await DB.put("messages", { ...msg, id: uid("msg") });
+  }
 }
 
 function updateBadges(){
@@ -1913,10 +1880,44 @@ $("#search").addEventListener("input", (e)=>{
   render();
 });
 
+const mqSidebar = window.matchMedia("(max-width:980px)");
+const sidebarEl = $("#sidebar");
+const closeSidebar = ()=>{
+  sidebarEl.classList.remove("open");
+  document.body.classList.remove("sidebar-open");
+  setTimeout(()=>{ try{ state.map.obj && state.map.obj.invalidateSize(); }catch(e){} }, 200);
+};
+
 $("#btnHamburger").onclick = ()=>{
-  $("#sidebar").classList.toggle("open");
+  const isOpen = sidebarEl.classList.toggle("open");
+  document.body.classList.toggle("sidebar-open", isOpen);
   setTimeout(()=>{ try{ state.map.obj && state.map.obj.invalidateSize(); }catch(e){} }, 300);
 };
+
+$("#nav").addEventListener("click", (e)=>{
+  if(e.target.closest("a") && mqSidebar.matches){
+    closeSidebar();
+  }
+});
+
+document.addEventListener("click", (e)=>{
+  if(!mqSidebar.matches) return;
+  const isSidebar = sidebarEl.contains(e.target);
+  const isTrigger = e.target === $("#btnHamburger");
+  if(!isSidebar && !isTrigger){
+    closeSidebar();
+  }
+});
+
+if(mqSidebar.addEventListener){
+  mqSidebar.addEventListener("change", ()=>{
+    if(!mqSidebar.matches) document.body.classList.remove("sidebar-open");
+  });
+}else{
+  mqSidebar.addListener(()=>{
+    if(!mqSidebar.matches) document.body.classList.remove("sidebar-open");
+  });
+}
 
 $("#btnLocate").onclick = async ()=>{
   await requestLocation();

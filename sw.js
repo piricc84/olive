@@ -1,9 +1,11 @@
-const CACHE_NAME = "olivefly-sentinel-v1";
+const CACHE_NAME = "olivefly-sentinel-v3";
 const STATIC_ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
+  "./mobile.css",
   "./app.js",
+  "./seed-data.js",
   "./db.js",
   "./manifest.json",
   "./icons/icon-192.png",
