@@ -1928,7 +1928,26 @@ $("#btnQuickInspect").onclick = ()=>{
   openInspectionModal();
 };
 
-window.addEventListener("hashchange", ()=> render());
+const nav = $("#nav");
+if(nav){
+  nav.addEventListener("click", (e)=>{
+    const link = e.target.closest("a");
+    if(!link) return;
+    if(window.matchMedia("(max-width: 980px)").matches){
+      const sidebar = $("#sidebar");
+      if(sidebar) sidebar.classList.remove("open");
+    }
+  });
+}
+
+window.addEventListener("hashchange", ()=>{
+  render();
+  if(window.matchMedia("(max-width: 980px)").matches){
+    const sidebar = $("#sidebar");
+    if(sidebar) sidebar.classList.remove("open");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+});
 
 // Mobile FAB + responsive map handling (adds FAB/menu dynamically)
 (function ensureMobileUI(){

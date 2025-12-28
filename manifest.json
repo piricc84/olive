@@ -3,6 +3,7 @@
   "short_name": "OliveFly",
   "start_url": "./index.html",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#0E121C",
   "theme_color": "#00C8A0",
   "icons": [

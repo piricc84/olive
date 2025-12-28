@@ -11,6 +11,10 @@
   --ok:#3EE282;
   --shadow: 0 14px 40px rgba(0,0,0,.35);
   --radius: 18px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
 }
 
 *{box-sizing:border-box}
@@ -18,6 +22,9 @@ html,body{height:100%}
 body{
   margin:0;
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  text-rendering: optimizeLegibility;
   background:
     radial-gradient(1200px 800px at 20% -10%, rgba(0,200,160,.22), transparent 55%),
     radial-gradient(1000px 700px at 110% 20%, rgba(0,163,255,.18), transparent 55%),
@@ -28,7 +35,7 @@ body{
 }
 
 a{color:inherit}
-button, input, select, textarea{font:inherit}
+button, input, select, textarea{font:inherit; touch-action: manipulation}
 .hidden{display:none!important}
 
 .app{
@@ -41,7 +48,8 @@ button, input, select, textarea{font:inherit}
   position:sticky;
   top:0;
   height:100vh;
-  padding:18px;
+  min-height:100dvh;
+  padding: calc(18px + var(--safe-top)) 18px calc(18px + var(--safe-bottom)) 18px;
   border-right: 1px solid rgba(255,255,255,.06);
   background: linear-gradient(180deg, rgba(17,24,39,.92), rgba(11,18,32,.86));
   backdrop-filter: blur(10px);
@@ -67,6 +75,7 @@ button, input, select, textarea{font:inherit}
 .nav a{
   display:flex; align-items:center; gap:10px;
   padding:11px 12px;
+  min-height:44px;
   border-radius: 14px;
   text-decoration:none;
   color:var(--muted);
@@ -91,7 +100,8 @@ button, input, select, textarea{font:inherit}
 }
 
 .main{
-  padding: 18px 22px 50px 22px;
+  padding: calc(18px + var(--safe-top)) calc(22px + var(--safe-right)) calc(80px + var(--safe-bottom)) calc(22px + var(--safe-left));
+  min-height: 100dvh;
 }
 
 .topbar{
@@ -135,6 +145,11 @@ button, input, select, textarea{font:inherit}
   color: var(--text);
   border-radius: 14px;
   padding: 10px 12px;
+  min-height:44px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
   cursor:pointer;
   transition:.18s ease;
 }
@@ -234,7 +249,7 @@ button, input, select, textarea{font:inherit}
 
 .toast{
   position: fixed;
-  bottom: 18px; right: 18px;
+  bottom: calc(18px + var(--safe-bottom)); right: calc(18px + var(--safe-right));
   width: min(420px, calc(100vw - 36px));
   display:flex;
   flex-direction:column;
@@ -285,6 +300,44 @@ hr.sep{border:0;border-top:1px solid rgba(255,255,255,.08); margin: 12px 0}
   overflow:hidden;
   border:1px solid rgba(255,255,255,.08);
 }
+
+.fab{
+  position: fixed;
+  bottom: calc(18px + var(--safe-bottom));
+  right: calc(18px + var(--safe-right));
+  width:56px; height:56px;
+  border-radius: 50%;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  border:1px solid rgba(255,255,255,.14);
+  background: linear-gradient(135deg, rgba(0,200,160,.25), rgba(0,163,255,.18));
+  color: var(--text);
+  box-shadow: var(--shadow);
+  cursor:pointer;
+  z-index: 9996;
+}
+
+.fab-menu{
+  position: fixed;
+  bottom: calc(86px + var(--safe-bottom));
+  right: calc(18px + var(--safe-right));
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  padding:10px;
+  border-radius: 16px;
+  background: rgba(17,24,39,.94);
+  border:1px solid rgba(255,255,255,.10);
+  box-shadow: var(--shadow);
+  transform: translateY(10px);
+  opacity:0;
+  pointer-events:none;
+  transition: .16s ease;
+  z-index: 9995;
+}
+.fab-menu.open{opacity:1; transform: translateY(0); pointer-events:auto;}
+.fab-menu .btn{width:100%}
 
 @media (max-width: 980px){
   .app{grid-template-columns: 1fr}
