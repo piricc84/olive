@@ -2125,7 +2125,9 @@ window.addEventListener("hashchange", ()=>{
 // Mobile FAB + responsive map handling (adds FAB/menu dynamically)
 (function ensureMobileUI(){
   if(typeof document === 'undefined') return;
-  if(!document.getElementById('fabAction')){
+  const existingFab = document.getElementById('fabAction');
+  const existingMenu = document.getElementById('fabMenu');
+  if(!existingFab){
     const fab = document.createElement('button');
     fab.id = 'fabAction'; fab.className = 'fab'; fab.setAttribute('aria-label','Azioni rapide'); fab.innerText = 'Azioni';
     const menu = document.createElement('div'); menu.id = 'fabMenu'; menu.className = 'fab-menu'; menu.setAttribute('aria-hidden','true');
@@ -2145,6 +2147,25 @@ window.addEventListener("hashchange", ()=>{
     const updateFab = ()=>{ if(mq.matches){ fab.style.display='flex'; } else { fab.style.display='none'; menu.classList.remove('open'); } };
     if(mq.addEventListener) mq.addEventListener('change', updateFab); else mq.addListener(updateFab);
     updateFab();
+  }
+  if(existingFab && existingMenu){
+    const fab = existingFab;
+    const menu = existingMenu;
+    const b1 = document.getElementById('fabAddTrap');
+    const b2 = document.getElementById('fabQuickInspectMenu');
+    if(fab && menu && b1 && b2){
+      fab.addEventListener('click', (e)=>{
+        e.stopPropagation(); menu.classList.toggle('open');
+      });
+      b1.addEventListener('click', ()=>{ openTrapModal(); menu.classList.remove('open'); });
+      b2.addEventListener('click', ()=>{ openInspectionModal(); menu.classList.remove('open'); });
+      document.addEventListener('click', (e)=>{ if(!menu.contains(e.target) && e.target !== fab) menu.classList.remove('open'); });
+
+      const mq = window.matchMedia('(max-width:980px)');
+      const updateFab = ()=>{ if(mq.matches){ fab.style.display='flex'; } else { fab.style.display='none'; menu.classList.remove('open'); } };
+      if(mq.addEventListener) mq.addEventListener('change', updateFab); else mq.addListener(updateFab);
+      updateFab();
+    }
   }
 
   window.addEventListener('resize', ()=>{ try{ state.map.obj && state.map.obj.invalidateSize(); }catch(e){} });
