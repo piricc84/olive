@@ -99,7 +99,6 @@ async function loadAll(){
 }
 
 async function seedLoseto(){
-  const now = new Date();
   const center = { ...DEFAULT_SITE };
   const traps = [
     { id: uid("trap"), name:"Loseto Nord", code:"LO-001", lat:center.lat+0.0007, lng:center.lng+0.0005, type:"Cromotropica", bait:"Attrattivo ammoniacale", installDate: todayISO(), status:"Attiva", tags:["loseto","coratina"], notes:"Filare esposto al vento, sostituire pannello ogni 14 gg" },
@@ -110,33 +109,36 @@ async function seedLoseto(){
   ];
   for(const t of traps) await DB.put("traps", t);
 
-  const trapIds = traps.map(t=>t.id);
-  for(let i=0;i<24;i++){
-    const d = new Date(now.getTime() - (23-i)*24*3600*1000);
-    const date = d.toISOString().slice(0,10);
-    for(const trapId of trapIds){
-      if(Math.random() < 0.45) continue;
-      const adults = Math.floor(Math.random()*7);
-      const females = Math.floor(adults * (0.35 + Math.random()*0.35));
-      const larvae = Math.random()<0.2 ? Math.floor(Math.random()*2) : 0;
-      const temp = 16 + Math.random()*13;
-      const hum = 48 + Math.random()*30;
-      const wind = 2 + Math.random()*9;
-      await DB.put("inspections", {
-        id: uid("insp"),
-        trapId,
-        date,
-        adults,
-        females,
-        larvae,
-        temperature: Math.round(temp*10)/10,
-        humidity: Math.round(hum),
-        wind: Math.round(wind),
-        notes: adults>=6 ? "Picco: valutare intervento" : (adults>=3 ? "Trend in crescita" : "Nella norma"),
-        operator: "Team Loseto",
-        photoDataUrl: null
-      });
-    }
+  const byCode = Object.fromEntries(traps.map(t=>[t.code, t.id]));
+  const inspections = [
+    { code:"LO-001", daysAgo:1, adults:4, females:2, larvae:0, temperature:25.1, humidity:58, wind:6, notes:"Nella norma" },
+    { code:"LO-002", daysAgo:1, adults:6, females:3, larvae:1, temperature:25.0, humidity:60, wind:5, notes:"Picco: valutare intervento" },
+    { code:"LO-003", daysAgo:2, adults:3, females:1, larvae:0, temperature:24.2, humidity:62, wind:4, notes:"Trend in crescita" },
+    { code:"LO-004", daysAgo:2, adults:2, females:1, larvae:0, temperature:23.6, humidity:59, wind:7, notes:"Nella norma" },
+    { code:"LO-005", daysAgo:3, adults:5, females:2, larvae:0, temperature:24.8, humidity:57, wind:3, notes:"Sotto controllo" },
+    { code:"LO-001", daysAgo:4, adults:2, females:1, larvae:0, temperature:23.9, humidity:55, wind:5, notes:"Nella norma" },
+    { code:"LO-002", daysAgo:5, adults:4, females:2, larvae:0, temperature:23.4, humidity:61, wind:4, notes:"Trend in crescita" },
+    { code:"LO-003", daysAgo:6, adults:1, females:0, larvae:0, temperature:22.8, humidity:63, wind:6, notes:"Nella norma" },
+    { code:"LO-004", daysAgo:7, adults:0, females:0, larvae:0, temperature:22.1, humidity:60, wind:8, notes:"In manutenzione" },
+    { code:"LO-005", daysAgo:8, adults:3, females:1, larvae:0, temperature:22.6, humidity:58, wind:5, notes:"Nella norma" },
+    { code:"LO-001", daysAgo:10, adults:5, females:2, larvae:1, temperature:21.9, humidity:64, wind:4, notes:"Presenza larve" },
+    { code:"LO-003", daysAgo:12, adults:2, females:1, larvae:0, temperature:21.2, humidity:66, wind:3, notes:"Nella norma" }
+  ];
+  for(const i of inspections){
+    await DB.put("inspections", {
+      id: uid("insp"),
+      trapId: byCode[i.code],
+      date: daysAgoISO(i.daysAgo),
+      adults: i.adults,
+      females: i.females,
+      larvae: i.larvae,
+      temperature: i.temperature,
+      humidity: i.humidity,
+      wind: i.wind,
+      notes: i.notes,
+      operator: "Team Loseto",
+      photoDataUrl: null
+    });
   }
 
   const alert1 = { id: uid("al"), name:"Soglia catture (adulti)", metric:"adults", threshold: 5, active: true, scope:"any", note:"Notifica quando una singola ispezione supera 5 adulti" };
@@ -863,7 +865,7 @@ function viewSettings(){
           <hr class="sep"/>
           <div class="mini">
             Esporta per inviare il backup a un agronomo o caricare su un server.
-            In produzione aggiungeremmo sync/cloud, ruoli e audit.
+            Usa export completo per backup e trasferimenti tra dispositivi.
           </div>
         </div>
       </div>
@@ -979,7 +981,7 @@ function viewAbout(){
         <div class="hd">
           <div>
             <h2>Info</h2>
-            <p>Roadmap consigliata (se vuoi farlo “serio”)</p>
+            <p>Uso operativo e requisiti</p>
           </div>
         </div>
         <div class="bd">
@@ -994,32 +996,20 @@ function viewAbout(){
                 <li>Report condivisibile (Web Share / Clipboard)</li>
                 <li>Offline-first (IndexedDB) + PWA installabile</li>
               </ul>
-              <hr class="sep"/>
-              <div style="font-weight:700; margin-bottom:8px">Limiti (voluti, per restare “solo Git”)</div>
-              <ul class="mini">
-                <li>Niente push in background (serve backend Web Push)</li>
-                <li>Niente login reale (serve backend + auth)</li>
-                <li>Mappa tile online (offline = no tiles)</li>
-              </ul>
             </div>
             <div>
-              <div style="font-weight:700; margin-bottom:8px">Roadmap “pro” (step minimi)</div>
-              <ol class="mini">
-                <li>Backend leggero (Supabase/Firebase) + ruoli</li>
-                <li>Web Push + alert schedulati</li>
-                <li>Integrazione sensori/IoT (ESP32, LoRaWAN, NB-IoT)</li>
-                <li>Modello rischio basato su dati reali + meteo</li>
-                <li>Dashboard agronomo: heatmap + interventi</li>
-              </ol>
-              <hr class="sep"/>
-              <button class="btn primary" id="btnOpenRoadmap">Apri README</button>
+              <div style="font-weight:700; margin-bottom:8px">Requisiti tecnici</div>
+              <ul class="mini">
+                <li>Mappa online: richiede connettivita per le tile</li>
+                <li>Notifiche push: per background serve backend dedicato</li>
+                <li>WhatsApp: richiede app installata o WhatsApp Web</li>
+              </ul>
             </div>
           </div>
         </div>
       </div>
     </div>
   `;
-  el.querySelector("#btnOpenRoadmap").onclick = ()=> window.open("./README.html", "_blank");
   return el;
 }
 
@@ -1713,7 +1703,7 @@ async function openReportModal(){
         </div>
         <hr class="sep"/>
         <div class="mini">
-          In produzione: invio automatico a mailing list / Teams, firma digitale, allegati foto.
+          Suggerimento: usa WhatsApp o CSV per condividere il report.
         </div>
       </div>
     </div>
