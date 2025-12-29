@@ -13,13 +13,20 @@ const state = {
   messages: [],
   settings: {
     unit: "trappole",
-    nearRadiusM: 200,
+    nearRadiusM: 300,
     defaultThreshold: 5,
     enableWeather: true,
-    enableNearbyAlert: true
+    enableNearbyAlert: true,
+    whatsappNumber: ""
   },
   map: { obj: null, layer: null, markers: [] },
   charts: { weekly: null, byTrap: null, risk: null }
+};
+
+const DEFAULT_SITE = {
+  name: "Bari Loseto",
+  lat: 41.031518,
+  lng: 16.852941
 };
 
 function toast(title, msg=""){
@@ -34,6 +41,20 @@ function toast(title, msg=""){
 
 function escapeHtml(s){
   return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
+}
+
+function cleanPhoneNumber(n){
+  return String(n || "").replace(/[^\d]/g, "");
+}
+
+function getWhatsAppUrl(text){
+  const phone = cleanPhoneNumber(state.settings.whatsappNumber);
+  const encoded = encodeURIComponent(text);
+  return phone ? `https://wa.me/${phone}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
+}
+
+function openWhatsApp(text){
+  window.open(getWhatsAppUrl(text), "_blank");
 }
 
 function formatDate(iso){
@@ -66,7 +87,7 @@ async function loadAll(){
 
   // seed if empty
   if(state.traps.length === 0){
-    await seedDemo();
+    await seedLoseto();
     state.traps = await DB.getAll("traps");
     state.inspections = await DB.getAll("inspections");
     state.alerts = await DB.getAll("alerts");
@@ -78,7 +99,7 @@ async function loadAll(){
 
 async function seedDemo(){
   const now = new Date();
-  const center = { lat: 41.125, lng: 16.87 }; // Bari-ish demo coordinate
+  const center = { ...DEFAULT_SITE };
   const traps = [
     { id: uid("trap"), name:"Trappola A — Coratina", code:"A-001", lat:center.lat+0.004, lng:center.lng+0.006, type:"Cromotropica", bait:"Attrattivo ammoniacale", installDate: todayISO(), status:"Attiva", tags:["coratina","collina"], notes:"Zona ventosa; sostituire pannello ogni 14 gg" },
     { id: uid("trap"), name:"Trappola B — Leccino", code:"B-002", lat:center.lat-0.003, lng:center.lng+0.002, type:"Feromonica", bait:"Feromone + ammonio", installDate: todayISO(), status:"Attiva", tags:["leccino","pianura"], notes:"Controllare dopo pioggia" },
@@ -130,6 +151,62 @@ async function seedDemo(){
     title: "Kickoff monitoraggio",
     body: "Demo: aggiungi trappole, registra ispezioni, genera report e condividilo su WhatsApp/Email.",
     tags: ["demo", "operativo"]
+  });
+}
+
+async function seedLoseto(){
+  const now = new Date();
+  const center = { ...DEFAULT_SITE };
+  const traps = [
+    { id: uid("trap"), name:"Loseto Nord", code:"LO-001", lat:center.lat+0.0007, lng:center.lng+0.0005, type:"Cromotropica", bait:"Attrattivo ammoniacale", installDate: todayISO(), status:"Attiva", tags:["loseto","coratina"], notes:"Filare esposto al vento, sostituire pannello ogni 14 gg" },
+    { id: uid("trap"), name:"Loseto Sud", code:"LO-002", lat:center.lat-0.0008, lng:center.lng-0.0006, type:"Feromonica", bait:"Feromone + ammonio", installDate: todayISO(), status:"Attiva", tags:["loseto","leccino"], notes:"Controllare dopo piogge intense" },
+    { id: uid("trap"), name:"Loseto Est", code:"LO-003", lat:center.lat+0.0004, lng:center.lng+0.0011, type:"Cromotropica", bait:"Attrattivo proteico", installDate: todayISO(), status:"Attiva", tags:["loseto","frantoio"], notes:"Area irrigata, buona accessibilita" },
+    { id: uid("trap"), name:"Loseto Ovest", code:"LO-004", lat:center.lat-0.0002, lng:center.lng-0.0011, type:"Feromonica", bait:"Feromone + ammonio", installDate: todayISO(), status:"In manutenzione", tags:["loseto","collina"], notes:"Sostituire capsula feromonica" },
+    { id: uid("trap"), name:"Loseto Centro", code:"LO-005", lat:center.lat, lng:center.lng, type:"Cromotropica", bait:"Attrattivo ammoniacale", installDate: todayISO(), status:"Attiva", tags:["loseto","campione"], notes:"Punto di riferimento area monitoraggio" }
+  ];
+  for(const t of traps) await DB.put("traps", t);
+
+  const trapIds = traps.map(t=>t.id);
+  for(let i=0;i<24;i++){
+    const d = new Date(now.getTime() - (23-i)*24*3600*1000);
+    const date = d.toISOString().slice(0,10);
+    for(const trapId of trapIds){
+      if(Math.random() < 0.45) continue;
+      const adults = Math.floor(Math.random()*7);
+      const females = Math.floor(adults * (0.35 + Math.random()*0.35));
+      const larvae = Math.random()<0.2 ? Math.floor(Math.random()*2) : 0;
+      const temp = 16 + Math.random()*13;
+      const hum = 48 + Math.random()*30;
+      const wind = 2 + Math.random()*9;
+      await DB.put("inspections", {
+        id: uid("insp"),
+        trapId,
+        date,
+        adults,
+        females,
+        larvae,
+        temperature: Math.round(temp*10)/10,
+        humidity: Math.round(hum),
+        wind: Math.round(wind),
+        notes: adults>=6 ? "Picco: valutare intervento" : (adults>=3 ? "Trend in crescita" : "Nella norma"),
+        operator: "Team Loseto",
+        photoDataUrl: null
+      });
+    }
+  }
+
+  const alert1 = { id: uid("al"), name:"Soglia catture (adulti)", metric:"adults", threshold: 5, active: true, scope:"any", note:"Notifica quando una singola ispezione supera 5 adulti" };
+  const alert2 = { id: uid("al"), name:"Presenza larve", metric:"larvae", threshold: 1, active: true, scope:"any", note:"Notifica alla prima larva rilevata" };
+  const alert3 = { id: uid("al"), name:"Trappole vicine (300m)", metric:"nearby", threshold: state.settings.nearRadiusM, active: true, scope:"any", note:"Avvisa se sei vicino a una trappola quando apri la PWA" };
+  for(const a of [alert1, alert2, alert3]) await DB.put("alerts", a);
+
+  await DB.put("messages", {
+    id: uid("msg"),
+    date: new Date().toISOString(),
+    channel: "Team",
+    title: "Kickoff monitoraggio Loseto",
+    body: "Dati pre-caricati per Bari Loseto. Usa la mappa per verificare le trappole e avvia le ispezioni.",
+    tags: ["demo", "operativo", "loseto"]
   });
 }
 
@@ -271,6 +348,10 @@ async function postRender(route){
   }
   if(route === "analytics"){
     drawCharts();
+    const recalc = $("#btnRecalc");
+    const suggest = $("#btnSuggest");
+    if(recalc) recalc.textContent = "Ricalcola";
+    if(suggest) suggest.textContent = "Suggerimenti";
   }
 }
 
@@ -319,10 +400,10 @@ function viewDashboard(){
         </div>
         <div class="bd">
           <div class="row">
-            <button class="btn primary" id="dashAddTrap">➕ Nuova trappola</button>
-            <button class="btn" id="dashAddInspection">🧾 Nuova ispezione</button>
-            <button class="btn" id="dashReport">📤 Genera report</button>
-            <button class="btn" id="dashNotif">🔔 Attiva notifiche</button>
+            <button class="btn primary" id="dashAddTrap">Nuova trappola</button>
+            <button class="btn" id="dashAddInspection">Nuova ispezione</button>
+            <button class="btn" id="dashReport">Genera report</button>
+            <button class="btn" id="dashNotif">Attiva notifiche</button>
           </div>
           <hr class="sep"/>
           <div class="mini">
@@ -338,7 +419,7 @@ function viewDashboard(){
             <h2>Trappole vicine</h2>
             <p>${state.position ? "Basato sulla tua posizione" : "Attiva la posizione per vedere vicinanza"}</p>
           </div>
-          <button class="btn small" id="dashLocate">📍 Aggiorna</button>
+          <button class="btn small" id="dashLocate">Aggiorna</button>
         </div>
         <div class="bd">
           ${nearby.length ? `
@@ -364,7 +445,7 @@ function viewDashboard(){
             <h2>Ultime ispezioni</h2>
             <p>Trend rapido e note operative</p>
           </div>
-          <button class="btn small" id="dashGoInspections">Apri Ispezioni →</button>
+          <button class="btn small" id="dashGoInspections">Apri ispezioni</button>
         </div>
         <div class="bd">
           <table class="table">
@@ -420,13 +501,14 @@ function viewMap(){
             <p>Click marker per dettagli e ispezione rapida</p>
           </div>
           <div class="row">
-            <button class="btn small" id="mapCenter">🎯 Centra</button>
-            <button class="btn small" id="mapAdd">➕ Aggiungi qui</button>
+            <button class="btn small" id="mapCenter">Centra</button>
+            <button class="btn small" id="mapAdd">Aggiungi qui</button>
           </div>
         </div>
         <div class="bd">
           <div id="map" class="map"></div>
           <div class="mini" style="margin-top:10px">
+            <b>Area base:</b> ${DEFAULT_SITE.name} (${DEFAULT_SITE.lat}, ${DEFAULT_SITE.lng}).<br/>
             <b>Nota:</b> le mappe usano tile online (Leaflet/OpenStreetMap). Se offline, la PWA resta usabile (CRUD + analytics), ma senza tile.
           </div>
         </div>
@@ -438,7 +520,7 @@ function viewMap(){
             <h2>Vicino a te</h2>
             <p>Raggio: ${state.settings.nearRadiusM} m</p>
           </div>
-          <button class="btn small" id="mapLocate">📍 Aggiorna</button>
+          <button class="btn small" id="mapLocate">Aggiorna</button>
         </div>
         <div class="bd">
           ${nearby.length ? `
@@ -492,9 +574,9 @@ function viewTraps(){
             <p>Anagrafiche, coordinate, stato e note</p>
           </div>
           <div class="row">
-            <button class="btn" id="btnImport">⬆️ Import JSON</button>
-            <button class="btn" id="btnExport">⬇️ Export JSON</button>
-            <button class="btn primary" id="btnAddTrap">➕ Nuova trappola</button>
+            <button class="btn" id="btnImport">Import JSON</button>
+            <button class="btn" id="btnExport">Export JSON</button>
+            <button class="btn primary" id="btnAddTrap">Nuova trappola</button>
           </div>
         </div>
         <div class="bd">
@@ -554,8 +636,8 @@ function viewInspections(){
             <p>Catture, condizioni e note operative</p>
           </div>
           <div class="row">
-            <button class="btn" id="btnReport">📤 Report</button>
-            <button class="btn primary" id="btnAddInspection">➕ Nuova ispezione</button>
+            <button class="btn" id="btnReport">Report</button>
+            <button class="btn primary" id="btnAddInspection">Nuova ispezione</button>
           </div>
         </div>
         <div class="bd">
@@ -669,8 +751,8 @@ function viewAlerts(){
             <p>Soglie su ispezioni e vicinanza</p>
           </div>
           <div class="row">
-            <button class="btn" id="btnEnableNotif">🔔 Attiva notifiche</button>
-            <button class="btn primary" id="btnAddAlert">➕ Nuova regola</button>
+            <button class="btn" id="btnEnableNotif">Attiva notifiche</button>
+            <button class="btn primary" id="btnAddAlert">Nuova regola</button>
           </div>
         </div>
         <div class="bd">
@@ -718,8 +800,9 @@ function viewMessages(){
             <p>Log condivisibile (team, agronomo, cooperativa)</p>
           </div>
           <div class="row">
-            <button class="btn" id="btnShareLog">📤 Condividi log</button>
-            <button class="btn primary" id="btnAddMsg">➕ Nuovo messaggio</button>
+            <button class="btn" id="btnShareLog">Condividi log</button>
+            <button class="btn" id="btnShareLogWhatsapp">WhatsApp log</button>
+            <button class="btn primary" id="btnAddMsg">Nuovo messaggio</button>
           </div>
         </div>
         <div class="bd">
@@ -728,16 +811,17 @@ function viewMessages(){
               <div style="display:flex; justify-content:space-between; gap:10px">
                 <div>
                   <div style="font-weight:700">${escapeHtml(m.title)}</div>
-                  <div class="mini">${escapeHtml(m.channel)} • ${new Date(m.date).toLocaleString("it-IT")}</div>
+                  <div class="mini">${escapeHtml(m.channel)} - ${new Date(m.date).toLocaleString("it-IT")}</div>
                 </div>
                 <div>
                   <button class="btn small" data-open="${m.id}">Apri</button>
+                  <button class="btn small" data-wa="${m.id}">WhatsApp</button>
                 </div>
               </div>
               <div style="margin-top:10px; color:rgba(231,238,247,.92)">${escapeHtml(m.body).replaceAll("\n","<br/>")}</div>
               ${m.tags?.length ? `<div style="margin-top:10px">${m.tags.map(t=>`<span class="pill">${escapeHtml(t)}</span>`).join(" ")}</div>` : ""}
             </div>
-          `).join("") : `<div class="mini">Nessun messaggio. Usa “Nuovo messaggio”.</div>`}
+          `).join("") : `<div class="mini">Nessun messaggio. Usa "Nuovo messaggio".</div>`}
         </div>
       </div>
     </div>
@@ -745,10 +829,19 @@ function viewMessages(){
 
   el.querySelector("#btnAddMsg").onclick = ()=> openMessageModal();
   el.querySelector("#btnShareLog").onclick = ()=> shareLog();
+  el.querySelector("#btnShareLogWhatsapp").onclick = ()=> shareLogWhatsApp();
   $$("#view [data-open]", el).forEach(btn=>{
     btn.onclick = ()=>{
       const id = btn.getAttribute("data-open");
       openMessageModal(state.messages.find(m=>m.id===id));
+    };
+  });
+  $$("#view [data-wa]", el).forEach(btn=>{
+    btn.onclick = ()=>{
+      const id = btn.getAttribute("data-wa");
+      const m = state.messages.find(x=>x.id===id);
+      if(!m) return;
+      openWhatsApp(`[${m.channel}] ${m.title}\n${m.body}`);
     };
   });
   return el;
@@ -776,6 +869,10 @@ function viewSettings(){
               <label>Soglia default (adulti)</label>
               <input id="defaultThreshold" type="number" min="1" step="1" value="${state.settings.defaultThreshold}" />
             </div>
+            <div class="field">
+              <label>WhatsApp (numero opzionale)</label>
+              <input id="whatsNumber" value="${escapeHtml(state.settings.whatsappNumber||"")}" placeholder="Es. 393331112233" />
+            </div>
           </div>
           <div class="row" style="margin-top:12px">
             <div class="field">
@@ -795,12 +892,13 @@ function viewSettings(){
           </div>
           <hr class="sep"/>
           <div class="row">
-            <button class="btn" id="btnNotif">🔔 Notifiche</button>
-            <button class="btn" id="btnOffline">⬇️ Cache offline</button>
+            <button class="btn" id="btnNotif">Notifiche</button>
+            <button class="btn" id="btnOffline">Cache offline</button>
             <button class="btn primary" id="btnSaveSettings">Salva</button>
           </div>
           <div class="mini" style="margin-top:12px">
-            <b>Nota:</b> per notifiche “push” in background servirebbe un backend (Web Push). In questa demo usiamo Notification API (quando l’app è aperta) + toast.
+            <b>Nota:</b> le notifiche push in background richiedono un backend. In questa demo usiamo Notification API quando l'app e aperta.
+            WhatsApp usa il numero opzionale (se presente) oppure la scelta del contatto in app.
           </div>
         </div>
       </div>
@@ -813,8 +911,8 @@ function viewSettings(){
           </div>
         </div>
         <div class="bd">
-          <button class="btn" id="btnExportAll">⬇️ Export completo</button>
-          <button class="btn" style="margin-left:10px" id="btnImportAll">⬆️ Import</button>
+          <button class="btn" id="btnExportAll">Export completo</button>
+          <button class="btn" style="margin-left:10px" id="btnImportAll">Import</button>
           <hr class="sep"/>
           <div class="mini">
             Esporta per inviare il backup a un agronomo o caricare su un server.
@@ -828,6 +926,7 @@ function viewSettings(){
   el.querySelector("#btnSaveSettings").onclick = async ()=>{
     state.settings.nearRadiusM = Number($("#nearRadius").value || 200);
     state.settings.defaultThreshold = Number($("#defaultThreshold").value || 5);
+    state.settings.whatsappNumber = $("#whatsNumber").value.trim();
     state.settings.enableNearbyAlert = $("#enableNearby").value === "true";
     state.settings.enableWeather = $("#enableWeather").value === "true";
     await DB.setSetting("app_settings", state.settings);
@@ -885,7 +984,7 @@ function viewAbout(){
                 <li>Dashboard agronomo: heatmap + interventi</li>
               </ol>
               <hr class="sep"/>
-              <button class="btn primary" id="btnOpenRoadmap">📄 Apri README</button>
+              <button class="btn primary" id="btnOpenRoadmap">Apri README</button>
             </div>
           </div>
         </div>
@@ -905,7 +1004,7 @@ function viewNotFound(){
 // ---------- Map ----------
 async function ensureMap(){
   if(state.map.obj) return;
-  const pos = state.position || { lat: 41.125, lng: 16.87 };
+  const pos = state.position || { lat: DEFAULT_SITE.lat, lng: DEFAULT_SITE.lng };
   const map = L.map("map", { zoomControl: true }).setView([pos.lat, pos.lng], 13);
   state.map.obj = map;
 
@@ -933,7 +1032,7 @@ function drawMapMarkers(){
   state.map.markers = [];
 
   for(const t of state.traps){
-    const color = t.status==="Attiva" ? "#00C8A0" : (t.status==="In manutenzione" ? "#FFB020" : "#93A4B7");
+    const color = t.status==="Attiva" ? "#5A7D52" : (t.status==="In manutenzione" ? "#C8A24A" : "#8C9A85");
     const marker = L.circleMarker([t.lat, t.lng], { radius: 9, color, fillColor: color, fillOpacity: 0.85, weight: 2 });
     marker.addTo(state.map.obj);
     marker.on("click", ()=> openTrapModal(t));
@@ -943,7 +1042,7 @@ function drawMapMarkers(){
 
   // user location
   if(state.position){
-    const m = L.circleMarker([state.position.lat, state.position.lng], { radius: 9, color:"#00A3FF", fillColor:"#00A3FF", fillOpacity: 0.85, weight: 2 });
+    const m = L.circleMarker([state.position.lat, state.position.lng], { radius: 9, color:"#4B86B4", fillColor:"#4B86B4", fillOpacity: 0.85, weight: 2 });
     m.addTo(state.map.obj);
     m.bindTooltip("Tu sei qui", { direction:"top", offset:[0,-8] });
     state.map.markers.push(m);
@@ -952,7 +1051,7 @@ function drawMapMarkers(){
 
 function centerMap(){
   if(!state.map.obj) return;
-  const pos = state.position || { lat: 41.125, lng: 16.87 };
+  const pos = state.position || { lat: DEFAULT_SITE.lat, lng: DEFAULT_SITE.lng };
   state.map.obj.setView([pos.lat, pos.lng], 14);
 }
 
@@ -984,7 +1083,7 @@ function openModal({title, bodyHTML, footerButtons=[]}){
       <div class="modal">
         <div class="hd">
           <h3>${escapeHtml(title)}</h3>
-          <button class="btn small" id="mClose">✕</button>
+          <button class="btn small" id="mClose">Chiudi</button>
         </div>
         <div class="bd">${bodyHTML}</div>
         <div class="ft">
@@ -1009,8 +1108,8 @@ async function openTrapModal(trap=null, opts={}){
 
   const useMapCenter = opts.useMapCenter && state.map.obj;
   const center = useMapCenter ? state.map.obj.getCenter() : null;
-  const lat = opts.lat ?? (center ? center.lat : (trap?.lat ?? p?.lat ?? 41.125));
-  const lng = opts.lng ?? (center ? center.lng : (trap?.lng ?? p?.lng ?? 16.87));
+  const lat = opts.lat ?? (center ? center.lat : (trap?.lat ?? p?.lat ?? DEFAULT_SITE.lat));
+  const lng = opts.lng ?? (center ? center.lng : (trap?.lng ?? p?.lng ?? DEFAULT_SITE.lng));
 
   const body = `
     <div class="split">
@@ -1018,7 +1117,7 @@ async function openTrapModal(trap=null, opts={}){
         <div class="row">
           <div class="field">
             <label>Nome</label>
-            <input id="tName" value="${escapeHtml(trap?.name||"")}" placeholder="Es. Trappola Nord — Coratina" />
+            <input id="tName" value="${escapeHtml(trap?.name||"")}" placeholder="Es. Trappola Nord - Coratina" />
           </div>
           <div class="field">
             <label>Codice</label>
@@ -1077,9 +1176,10 @@ async function openTrapModal(trap=null, opts={}){
       <div>
         <div style="font-weight:700; margin-bottom:8px">Azioni</div>
         <div class="row">
-          <button class="btn" id="tUsePos">📍 Usa posizione</button>
-          <button class="btn" id="tInspect">🧾 Ispezione</button>
-          <button class="btn" id="tRoute">🧭 Naviga</button>
+          <button class="btn" id="tUsePos">Usa posizione</button>
+          <button class="btn" id="tInspect">Ispezione</button>
+          <button class="btn" id="tRoute">Naviga</button>
+          <button class="btn" id="tCopyCoords">Copia coordinate</button>
         </div>
         <hr class="sep"/>
         <div class="mini">
@@ -1137,6 +1237,16 @@ async function openTrapModal(trap=null, opts={}){
     const la = Number($("#tLat").value), lo = Number($("#tLng").value);
     const url = `https://www.google.com/maps/dir/?api=1&destination=${la},${lo}`;
     window.open(url, "_blank");
+  };
+  $("#tCopyCoords").onclick = async ()=>{
+    const la = Number($("#tLat").value), lo = Number($("#tLng").value);
+    const text = `${la}, ${lo}`;
+    try{
+      await navigator.clipboard.writeText(text);
+      toast("Copiato", "Coordinate copiate.");
+    }catch(e){
+      toast("Non supportato", "Copia manuale le coordinate.");
+    }
   };
 
   if(isEdit){
@@ -1260,9 +1370,9 @@ async function openInspectionModal(inspection=null, opts={}){
       <div>
         <div style="font-weight:700; margin-bottom:8px">Azioni</div>
         <div class="row">
-          <button class="btn" id="iAutoFem">🧮 Stima femmine</button>
-          <button class="btn" id="iWeather">☁️ Meteo</button>
-          <button class="btn" id="iCheckAlerts">🔔 Verifica alert</button>
+          <button class="btn" id="iAutoFem">Stima femmine</button>
+          <button class="btn" id="iWeather">Meteo</button>
+          <button class="btn" id="iCheckAlerts">Verifica alert</button>
         </div>
         <hr class="sep"/>
         ${weatherHint}
@@ -1513,6 +1623,7 @@ async function openMessageModal(msg=null){
   `;
   const footer = [
     ...(isEdit ? [{ id:"mDelete", label:"Elimina", kind:"danger" }] : []),
+    { id:"mWhatsapp", label:"WhatsApp" },
     { id:"mCancel", label:"Annulla" },
     { id:"mSave", label: isEdit ? "Salva" : "Pubblica", kind:"primary" }
   ];
@@ -1547,6 +1658,13 @@ async function openMessageModal(msg=null){
     closeModal();
     render();
   };
+  $("#mWhatsapp").onclick = ()=>{
+    const title = $("#mTitle").value.trim();
+    const body = $("#mBody").value.trim();
+    if(!title || !body){ toast("Campi mancanti", "Titolo e messaggio sono obbligatori."); return; }
+    const channel = $("#mChan").value;
+    openWhatsApp(`[${channel}] ${title}\n${body}`);
+  };
 }
 
 async function openReportModal(){
@@ -1560,9 +1678,10 @@ async function openReportModal(){
       <div>
         <div style="font-weight:700; margin-bottom:8px">Azioni</div>
         <div class="row">
-          <button class="btn" id="rCopy">📋 Copia</button>
-          <button class="btn primary" id="rShare">📤 Condividi</button>
-          <button class="btn" id="rCSV">⬇️ CSV ispezioni</button>
+          <button class="btn" id="rCopy">Copia</button>
+          <button class="btn primary" id="rShare">Condividi</button>
+          <button class="btn" id="rWhatsapp">WhatsApp</button>
+          <button class="btn" id="rCSV">CSV ispezioni</button>
         </div>
         <hr class="sep"/>
         <div class="mini">
@@ -1597,6 +1716,9 @@ async function openReportModal(){
       toast("Web Share non disponibile", "Copia e incolla su WhatsApp/Email.");
     }
   };
+  $("#rWhatsapp").onclick = ()=>{
+    openWhatsApp($("#rText").value);
+  };
   $("#rCSV").onclick = ()=>{
     const rows = state.inspections.map(i=>{
       const t = state.traps.find(x=>x.id===i.trapId);
@@ -1627,7 +1749,7 @@ function buildReportText(){
     byTrap[i.trapId].n += 1;
   }
   const lines = [];
-  lines.push(`OLIVEFLY SENTINEL — Report operativo`);
+  lines.push(`OLIVEFLY SENTINEL - Report operativo`);
   lines.push(`Data: ${now.toLocaleString("it-IT")}`);
   lines.push(`Periodo: ultimi 7 giorni (da ${formatDate(daysAgoISO(6))} a ${formatDate(todayISO())})`);
   lines.push("");
@@ -1791,16 +1913,25 @@ async function evaluateNearbyAlerts(){
 }
 
 // ---------- Share log ----------
-async function shareLog(){
+function buildLogText(){
   const last = [...state.messages].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10);
-  const text = last.map(m=>`• [${new Date(m.date).toLocaleString("it-IT")}] ${m.channel} — ${m.title}\n${m.body}`).join("\n\n");
+  return last.map(m=>`- [${new Date(m.date).toLocaleString("it-IT")}] ${m.channel} - ${m.title}\n${m.body}`).join("\n\n");
+}
+
+async function shareLog(){
+  const text = buildLogText();
   if(navigator.share){
-    try{ await navigator.share({ title:"OliveFly Sentinel — Log", text }); toast("Condiviso", "Log inviato."); }catch(e){}
+    try{ await navigator.share({ title:"OliveFly Sentinel - Log", text }); toast("Condiviso", "Log inviato."); }catch(e){}
   }else{
     try{ await navigator.clipboard.writeText(text); toast("Copiato", "Log copiato in clipboard."); }catch(e){
       toast("Non supportato", "Copia manuale dalla schermata.");
     }
   }
+}
+
+function shareLogWhatsApp(){
+  const text = buildLogText();
+  openWhatsApp(text);
 }
 
 // ---------- Charts ----------
@@ -1954,10 +2085,10 @@ window.addEventListener("hashchange", ()=>{
   if(typeof document === 'undefined') return;
   if(!document.getElementById('fabAction')){
     const fab = document.createElement('button');
-    fab.id = 'fabAction'; fab.className = 'fab'; fab.setAttribute('aria-label','Azioni rapide'); fab.innerText = '➕';
+    fab.id = 'fabAction'; fab.className = 'fab'; fab.setAttribute('aria-label','Azioni rapide'); fab.innerText = 'Azioni';
     const menu = document.createElement('div'); menu.id = 'fabMenu'; menu.className = 'fab-menu'; menu.setAttribute('aria-hidden','true');
-    const b1 = document.createElement('button'); b1.id='fabAddTrap'; b1.className='btn'; b1.innerText='➕ Aggiungi trappola';
-    const b2 = document.createElement('button'); b2.id='fabQuickInspectMenu'; b2.className='btn primary'; b2.innerText='🧾 Ispezione rapida';
+    const b1 = document.createElement('button'); b1.id='fabAddTrap'; b1.className='btn'; b1.innerText='Aggiungi trappola';
+    const b2 = document.createElement('button'); b2.id='fabQuickInspectMenu'; b2.className='btn primary'; b2.innerText='Ispezione rapida';
     menu.appendChild(b1); menu.appendChild(b2);
     document.body.appendChild(menu); document.body.appendChild(fab);
 

@@ -17,7 +17,7 @@ body{
     padding-left: max(16px, calc(12px + var(--safe-left)));
     padding-right: max(16px, calc(12px + var(--safe-right)));
     border-right: none;
-    box-shadow: 0 24px 60px rgba(0,0,0,.45);
+    box-shadow: 0 24px 50px rgba(31,42,31,.18);
   }
 
   .main{
@@ -33,9 +33,9 @@ body{
     gap: 10px;
     padding: 10px 12px;
     border-radius: 16px;
-    background: linear-gradient(180deg, rgba(17,24,39,.94), rgba(11,18,32,.9));
-    border: 1px solid rgba(255,255,255,.06);
-    box-shadow: 0 12px 30px rgba(0,0,0,.35);
+    background: var(--panel);
+    border: 1px solid rgba(31,42,31,.10);
+    box-shadow: 0 12px 28px rgba(31,42,31,.16);
   }
 
   .topbar .left{width:100%}

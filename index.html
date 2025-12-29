@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="OliveFly" />
   <meta name="format-detection" content="telephone=no, email=no" />
-  <meta name="theme-color" content="#00C8A0" />
+  <meta name="theme-color" content="#5A7D52" />
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <link rel="icon" href="icons/favicon.png" />
@@ -26,46 +26,46 @@
         <img src="icons/icon-192.png" alt="Logo" />
         <div>
           <h1>OliveFly Sentinel</h1>
-          <p>Trappole • Ispezioni • Alert • Report</p>
+          <p>Trappole | Ispezioni | Alert | Report</p>
         </div>
       </div>
 
       <nav class="nav" id="nav">
         <a href="#/dashboard" data-route="dashboard">
-          <span>📊 Dashboard</span>
+          <span>Dashboard</span>
         </a>
         <a href="#/map" data-route="map">
-          <span>🗺️ Mappa</span>
+          <span>Mappa</span>
           <span class="badge" id="badgeNearby">0</span>
         </a>
         <a href="#/traps" data-route="traps">
-          <span>🪤 Trappole</span>
+          <span>Trappole</span>
         </a>
         <a href="#/inspections" data-route="inspections">
-          <span>🧾 Ispezioni</span>
+          <span>Ispezioni</span>
         </a>
         <a href="#/analytics" data-route="analytics">
-          <span>📈 Analisi</span>
+          <span>Analisi</span>
         </a>
         <a href="#/alerts" data-route="alerts">
-          <span>🔔 Alert</span>
+          <span>Alert</span>
           <span class="badge" id="badgeAlerts">0</span>
         </a>
         <a href="#/messages" data-route="messages">
-          <span>💬 Comunicazioni</span>
+          <span>Comunicazioni</span>
         </a>
         <a href="#/settings" data-route="settings">
-          <span>⚙️ Impostazioni</span>
+          <span>Impostazioni</span>
         </a>
         <a href="#/about" data-route="about">
-          <span>ℹ️ Info</span>
+          <span>Info</span>
         </a>
       </nav>
 
-      <div style="margin-top:14px; padding:12px; border-radius:16px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06)">
+      <div class="tip">
         <div class="mini">
-          <strong style="color:#E7EEF7">Tip rapido</strong><br/>
-          Aggiungi una trappola dalla sezione <b>Trappole</b>, poi registra un'ispezione. Gli alert scattano su soglie e “vicinanza” quando apri la PWA.
+          <strong>Tip rapido</strong><br/>
+          Aggiungi una trappola dalla sezione <b>Trappole</b>, poi registra un'ispezione. Gli alert scattano su soglie e vicinanza quando apri la PWA.
         </div>
       </div>
     </aside>
@@ -73,15 +73,15 @@
     <main class="main">
       <div class="topbar">
         <div class="left">
-          <button class="hamburger" id="btnHamburger">☰</button>
+          <button class="hamburger" id="btnHamburger">Menu</button>
           <div class="search">
-            <span style="opacity:.9">🔎</span>
-            <input id="search" placeholder="Cerca (nome trappola, note, tag)..." />
+            <span style="opacity:.9">Cerca</span>
+            <input id="search" placeholder="Trappole, note, tag..." />
           </div>
         </div>
         <div class="actions">
-          <button class="btn" id="btnLocate">📍 Posizione</button>
-          <button class="btn primary" id="btnQuickInspect">➕ Ispezione rapida</button>
+          <button class="btn" id="btnLocate">Posizione</button>
+          <button class="btn primary" id="btnQuickInspect">Ispezione rapida</button>
         </div>
       </div>
 
@@ -91,10 +91,10 @@
     </main>
   </div>
 
-  <button id="fabAction" class="fab" aria-label="Azioni rapide">➕</button>
+  <button id="fabAction" class="fab" aria-label="Azioni rapide">Azioni</button>
   <div id="fabMenu" class="fab-menu" aria-hidden="true">
-    <button id="fabAddTrap" class="btn">➕ Aggiungi trappola</button>
-    <button id="fabQuickInspectMenu" class="btn primary">🧾 Ispezione rapida</button>
+    <button id="fabAddTrap" class="btn">Aggiungi trappola</button>
+    <button id="fabQuickInspectMenu" class="btn primary">Ispezione rapida</button>
   </div>
 
   <div id="modalRoot" class="hidden"></div>

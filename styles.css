@@ -1,15 +1,15 @@
 :root{
-  --bg:#0E121C;
-  --panel:#111827;
-  --card:#0B1220;
-  --muted:#93A4B7;
-  --text:#E7EEF7;
-  --primary:#00C8A0;
-  --primary2:#00A3FF;
-  --warn:#FFB020;
-  --danger:#FF4D6D;
-  --ok:#3EE282;
-  --shadow: 0 14px 40px rgba(0,0,0,.35);
+  --bg:#F2F4EF;
+  --panel:#F7F6F1;
+  --card:#FFFFFF;
+  --muted:#6F7C6C;
+  --text:#1F2A1F;
+  --primary:#5A7D52;
+  --primary2:#9BB36C;
+  --warn:#C8A24A;
+  --danger:#C15C4F;
+  --ok:#6BAA75;
+  --shadow: 0 10px 24px rgba(24,30,20,.12);
   --radius: 18px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
@@ -21,15 +21,14 @@
 html,body{height:100%}
 body{
   margin:0;
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
+  font-family: "Trebuchet MS", "Segoe UI", Verdana, sans-serif;
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
   text-rendering: optimizeLegibility;
   background:
-    radial-gradient(1200px 800px at 20% -10%, rgba(0,200,160,.22), transparent 55%),
-    radial-gradient(1000px 700px at 110% 20%, rgba(0,163,255,.18), transparent 55%),
-    radial-gradient(900px 600px at 40% 120%, rgba(255,176,32,.10), transparent 55%),
-    var(--bg);
+    radial-gradient(900px 640px at 12% -10%, rgba(143,176,107,.26), transparent 60%),
+    radial-gradient(840px 560px at 100% 10%, rgba(200,162,74,.20), transparent 60%),
+    linear-gradient(180deg, #F4F6F0 0%, #EDF1E7 60%, #E9EFE2 100%);
   color:var(--text);
   overflow-x:hidden;
 }
@@ -50,8 +49,8 @@ button, input, select, textarea{font:inherit; touch-action: manipulation}
   height:100vh;
   min-height:100dvh;
   padding: calc(18px + var(--safe-top)) 18px calc(18px + var(--safe-bottom)) 18px;
-  border-right: 1px solid rgba(255,255,255,.06);
-  background: linear-gradient(180deg, rgba(17,24,39,.92), rgba(11,18,32,.86));
+  border-right: 1px solid rgba(31,42,31,.08);
+  background: linear-gradient(180deg, rgba(247,246,241,.98), rgba(242,244,239,.96));
   backdrop-filter: blur(10px);
 }
 
@@ -59,12 +58,22 @@ button, input, select, textarea{font:inherit; touch-action: manipulation}
   display:flex; align-items:center; gap:12px;
   padding:12px 12px;
   border-radius: 16px;
-  background: rgba(255,255,255,.03);
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px rgba(31,42,31,.08);
 }
 .brand img{width:44px;height:44px;border-radius:14px}
 .brand h1{font-size:16px;margin:0;line-height:1.1}
 .brand p{margin:2px 0 0 0;color:var(--muted);font-size:12px}
+
+.tip{
+  margin-top:14px;
+  padding:12px;
+  border-radius:16px;
+  background: var(--card);
+  border:1px solid rgba(31,42,31,.08);
+  box-shadow: var(--shadow);
+}
+.tip strong{color:var(--text)}
 
 .nav{
   margin-top:14px;
@@ -81,13 +90,13 @@ button, input, select, textarea{font:inherit; touch-action: manipulation}
   color:var(--muted);
   background: transparent;
   transition: .18s ease;
-  border:1px solid rgba(255,255,255,.06);
+  border:1px solid rgba(31,42,31,.08);
 }
-.nav a:hover{transform:translateY(-1px); color:var(--text); border-color: rgba(0,200,160,.30)}
+.nav a:hover{transform:translateY(-1px); color:var(--text); border-color: rgba(90,125,82,.35)}
 .nav a.active{
   color:var(--text);
-  background: linear-gradient(135deg, rgba(0,200,160,.16), rgba(0,163,255,.10));
-  border-color: rgba(0,200,160,.30);
+  background: linear-gradient(135deg, rgba(90,125,82,.18), rgba(143,176,107,.18));
+  border-color: rgba(90,125,82,.35);
 }
 
 .nav .badge{
@@ -95,7 +104,7 @@ button, input, select, textarea{font:inherit; touch-action: manipulation}
   font-size:12px;
   padding:2px 8px;
   border-radius:999px;
-  background: rgba(255,255,255,.06);
+  background: rgba(31,42,31,.08);
   color: var(--text);
 }
 
@@ -116,8 +125,8 @@ button, input, select, textarea{font:inherit; touch-action: manipulation}
 }
 .hamburger{
   display:none;
-  border:1px solid rgba(255,255,255,.08);
-  background: rgba(255,255,255,.03);
+  border:1px solid rgba(31,42,31,.12);
+  background: var(--card);
   color: var(--text);
   border-radius: 14px;
   padding: 10px 12px;
@@ -128,8 +137,8 @@ button, input, select, textarea{font:inherit; touch-action: manipulation}
   display:flex; align-items:center; gap:10px;
   padding: 10px 12px;
   border-radius: 14px;
-  border:1px solid rgba(255,255,255,.08);
-  background: rgba(255,255,255,.03);
+  border:1px solid rgba(31,42,31,.12);
+  background: var(--card);
   min-width: 240px;
 }
 .search input{
@@ -140,8 +149,8 @@ button, input, select, textarea{font:inherit; touch-action: manipulation}
   display:flex; align-items:center; gap:10px;
 }
 .btn{
-  border:1px solid rgba(255,255,255,.10);
-  background: rgba(255,255,255,.03);
+  border:1px solid rgba(31,42,31,.12);
+  background: var(--card);
   color: var(--text);
   border-radius: 14px;
   padding: 10px 12px;
@@ -153,13 +162,13 @@ button, input, select, textarea{font:inherit; touch-action: manipulation}
   cursor:pointer;
   transition:.18s ease;
 }
-.btn:hover{transform: translateY(-1px); border-color: rgba(0,200,160,.35)}
+.btn:hover{transform: translateY(-1px); border-color: rgba(90,125,82,.45)}
 .btn.primary{
-  background: linear-gradient(135deg, rgba(0,200,160,.22), rgba(0,163,255,.14));
-  border-color: rgba(0,200,160,.35);
+  background: linear-gradient(135deg, rgba(90,125,82,.22), rgba(143,176,107,.20));
+  border-color: rgba(90,125,82,.45);
 }
-.btn.danger{border-color: rgba(255,77,109,.40)}
-.btn.warn{border-color: rgba(255,176,32,.45)}
+.btn.danger{border-color: rgba(193,92,79,.45)}
+.btn.warn{border-color: rgba(200,162,74,.55)}
 .btn.small{padding:8px 10px; border-radius:12px; font-size:13px}
 
 .grid{
@@ -169,8 +178,8 @@ button, input, select, textarea{font:inherit; touch-action: manipulation}
 }
 .card{
   grid-column: span 12;
-  background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
-  border: 1px solid rgba(255,255,255,.08);
+  background: var(--card);
+  border: 1px solid rgba(31,42,31,.08);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   overflow:hidden;
@@ -180,7 +189,7 @@ button, input, select, textarea{font:inherit; touch-action: manipulation}
   display:flex;
   justify-content:space-between;
   align-items:center;
-  border-bottom: 1px solid rgba(255,255,255,.06);
+  border-bottom: 1px solid rgba(31,42,31,.08);
 }
 .card .hd h2{font-size:14px;margin:0}
 .card .hd p{margin:0;color:var(--muted);font-size:12px}
@@ -195,8 +204,8 @@ button, input, select, textarea{font:inherit; touch-action: manipulation}
   grid-column: span 3;
   padding:14px 14px;
   border-radius: var(--radius);
-  background: linear-gradient(135deg, rgba(0,200,160,.16), rgba(0,163,255,.10));
-  border: 1px solid rgba(0,200,160,.26);
+  background: linear-gradient(135deg, rgba(90,125,82,.16), rgba(143,176,107,.16));
+  border: 1px solid rgba(90,125,82,.25);
   box-shadow: var(--shadow);
 }
 .kpi .label{color:var(--muted);font-size:12px}
@@ -230,22 +239,22 @@ button, input, select, textarea{font:inherit; touch-action: manipulation}
 .table th, .table td{
   text-align:left;
   padding: 10px 10px;
-  border-bottom: 1px solid rgba(255,255,255,.06);
+  border-bottom: 1px solid rgba(31,42,31,.08);
   font-size: 13px;
 }
 .table th{color:var(--muted); font-weight:600}
-.table tr:hover td{background: rgba(255,255,255,.02)}
+.table tr:hover td{background: rgba(90,125,82,.05)}
 .pill{
   display:inline-flex; align-items:center; gap:6px;
   padding:4px 10px;
   border-radius: 999px;
   font-size:12px;
-  border: 1px solid rgba(255,255,255,.10);
-  background: rgba(255,255,255,.03);
+  border: 1px solid rgba(31,42,31,.12);
+  background: rgba(90,125,82,.08);
 }
-.pill.ok{border-color: rgba(62,226,130,.35)}
-.pill.warn{border-color: rgba(255,176,32,.45)}
-.pill.danger{border-color: rgba(255,77,109,.45)}
+.pill.ok{border-color: rgba(107,170,117,.45)}
+.pill.warn{border-color: rgba(200,162,74,.55)}
+.pill.danger{border-color: rgba(193,92,79,.45)}
 
 .toast{
   position: fixed;
@@ -259,8 +268,8 @@ button, input, select, textarea{font:inherit; touch-action: manipulation}
 .toast .item{
   padding: 12px 12px;
   border-radius: 16px;
-  background: rgba(17,24,39,.92);
-  border: 1px solid rgba(255,255,255,.10);
+  background: var(--panel);
+  border: 1px solid rgba(31,42,31,.10);
   box-shadow: var(--shadow);
 }
 .toast .item strong{display:block; font-size:13px}
@@ -276,15 +285,15 @@ button, input, select, textarea{font:inherit; touch-action: manipulation}
 .modal{
   width: min(860px, 100%);
   border-radius: 22px;
-  background: linear-gradient(180deg, rgba(17,24,39,.96), rgba(11,18,32,.92));
-  border: 1px solid rgba(255,255,255,.10);
+  background: var(--card);
+  border: 1px solid rgba(31,42,31,.12);
   box-shadow: var(--shadow);
   overflow:hidden;
 }
-.modal .hd{padding: 14px 16px; border-bottom:1px solid rgba(255,255,255,.06); display:flex; justify-content:space-between; align-items:center}
+.modal .hd{padding: 14px 16px; border-bottom:1px solid rgba(31,42,31,.10); display:flex; justify-content:space-between; align-items:center}
 .modal .hd h3{margin:0; font-size:14px}
 .modal .bd{padding: 14px 16px}
-.modal .ft{padding: 14px 16px; border-top:1px solid rgba(255,255,255,.06); display:flex; justify-content:flex-end; gap:10px}
+.modal .ft{padding: 14px 16px; border-top:1px solid rgba(31,42,31,.10); display:flex; justify-content:flex-end; gap:10px}
 
 .split{
   display:grid; grid-template-columns: 1.2fr .8fr; gap:14px;
@@ -298,20 +307,21 @@ hr.sep{border:0;border-top:1px solid rgba(255,255,255,.08); margin: 12px 0}
   height: 420px;
   border-radius: 18px;
   overflow:hidden;
-  border:1px solid rgba(255,255,255,.08);
+  border:1px solid rgba(31,42,31,.12);
 }
 
 .fab{
   position: fixed;
   bottom: calc(18px + var(--safe-bottom));
   right: calc(18px + var(--safe-right));
-  width:56px; height:56px;
-  border-radius: 50%;
+  min-width:56px; height:48px;
+  padding: 0 14px;
+  border-radius: 999px;
   display:none;
   align-items:center;
   justify-content:center;
-  border:1px solid rgba(255,255,255,.14);
-  background: linear-gradient(135deg, rgba(0,200,160,.25), rgba(0,163,255,.18));
+  border:1px solid rgba(31,42,31,.18);
+  background: linear-gradient(135deg, rgba(90,125,82,.25), rgba(143,176,107,.20));
   color: var(--text);
   box-shadow: var(--shadow);
   cursor:pointer;
@@ -327,8 +337,8 @@ hr.sep{border:0;border-top:1px solid rgba(255,255,255,.08); margin: 12px 0}
   gap:8px;
   padding:10px;
   border-radius: 16px;
-  background: rgba(17,24,39,.94);
-  border:1px solid rgba(255,255,255,.10);
+  background: var(--panel);
+  border:1px solid rgba(31,42,31,.12);
   box-shadow: var(--shadow);
   transform: translateY(10px);
   opacity:0;
