@@ -17,7 +17,8 @@ const state = {
     defaultThreshold: 5,
     enableWeather: true,
     enableNearbyAlert: true,
-    whatsappNumber: ""
+    whatsappNumber: "",
+    contacts: []
   },
   map: { obj: null, layer: null, markers: [] },
   charts: { weekly: null, byTrap: null, risk: null }
@@ -97,63 +98,6 @@ async function loadAll(){
   updateBadges();
 }
 
-async function seedDemo(){
-  const now = new Date();
-  const center = { ...DEFAULT_SITE };
-  const traps = [
-    { id: uid("trap"), name:"Trappola A — Coratina", code:"A-001", lat:center.lat+0.004, lng:center.lng+0.006, type:"Cromotropica", bait:"Attrattivo ammoniacale", installDate: todayISO(), status:"Attiva", tags:["coratina","collina"], notes:"Zona ventosa; sostituire pannello ogni 14 gg" },
-    { id: uid("trap"), name:"Trappola B — Leccino", code:"B-002", lat:center.lat-0.003, lng:center.lng+0.002, type:"Feromonica", bait:"Feromone + ammonio", installDate: todayISO(), status:"Attiva", tags:["leccino","pianura"], notes:"Controllare dopo pioggia" },
-    { id: uid("trap"), name:"Trappola C — Area test", code:"C-003", lat:center.lat+0.001, lng:center.lng-0.006, type:"Cromotropica", bait:"Attrattivo proteico", installDate: todayISO(), status:"In manutenzione", tags:["test"], notes:"Sensore in prova (demo)" }
-  ];
-  for(const t of traps) await DB.put("traps", t);
-
-  // Inspections over last 21 days
-  const trapIds = traps.map(t=>t.id);
-  for(let i=0;i<22;i++){
-    const d = new Date(now.getTime() - (21-i)*24*3600*1000);
-    const date = d.toISOString().slice(0,10);
-    for(const trapId of trapIds){
-      if(Math.random() < 0.55) continue;
-      const adults = Math.floor(Math.random()*8);
-      const females = Math.floor(adults * (0.35 + Math.random()*0.35));
-      const larvae = Math.random()<0.25 ? Math.floor(Math.random()*3) : 0;
-      const temp = 18 + Math.random()*12;
-      const hum = 45 + Math.random()*35;
-      const wind = 2 + Math.random()*10;
-      await DB.put("inspections", {
-        id: uid("insp"),
-        trapId,
-        date,
-        adults,
-        females,
-        larvae,
-        temperature: Math.round(temp*10)/10,
-        humidity: Math.round(hum),
-        wind: Math.round(wind),
-        notes: adults>=6 ? "Picco: valutare intervento" : (adults>=3 ? "Trend in crescita" : "Nella norma"),
-        operator: "Pietro (demo)",
-        photoDataUrl: null
-      });
-    }
-  }
-
-  // Alerts
-  const alert1 = { id: uid("al"), name:"Soglia catture (adulti)", metric:"adults", threshold: 5, active: true, scope:"any", note:"Notifica quando una singola ispezione supera 5 adulti" };
-  const alert2 = { id: uid("al"), name:"Presenza larve", metric:"larvae", threshold: 1, active: true, scope:"any", note:"Notifica alla prima larva rilevata" };
-  const alert3 = { id: uid("al"), name:"Trappole vicine (200m)", metric:"nearby", threshold: state.settings.nearRadiusM, active: true, scope:"any", note:"Avvisa se sei vicino a una trappola quando apri la PWA" };
-  for(const a of [alert1, alert2, alert3]) await DB.put("alerts", a);
-
-  // Messages
-  await DB.put("messages", {
-    id: uid("msg"),
-    date: new Date().toISOString(),
-    channel: "Team",
-    title: "Kickoff monitoraggio",
-    body: "Demo: aggiungi trappole, registra ispezioni, genera report e condividilo su WhatsApp/Email.",
-    tags: ["demo", "operativo"]
-  });
-}
-
 async function seedLoseto(){
   const now = new Date();
   const center = { ...DEFAULT_SITE };
@@ -206,7 +150,7 @@ async function seedLoseto(){
     channel: "Team",
     title: "Kickoff monitoraggio Loseto",
     body: "Dati pre-caricati per Bari Loseto. Usa la mappa per verificare le trappole e avvia le ispezioni.",
-    tags: ["demo", "operativo", "loseto"]
+    tags: ["operativo", "loseto"]
   });
 }
 
@@ -404,10 +348,11 @@ function viewDashboard(){
             <button class="btn" id="dashAddInspection">Nuova ispezione</button>
             <button class="btn" id="dashReport">Genera report</button>
             <button class="btn" id="dashNotif">Attiva notifiche</button>
+            <button class="btn" id="dashWhatsapp">WhatsApp rapido</button>
           </div>
           <hr class="sep"/>
           <div class="mini">
-            <b>Demo “wow”:</b> premi <b>Posizione</b> in alto, vai su <b>Mappa</b> e vedrai le trappole vicine (badge a sinistra).
+            <b>Suggerimento:</b> premi <b>Posizione</b> in alto, vai su <b>Mappa</b> e vedrai le trappole vicine (badge a sinistra).
             Registra un'ispezione sopra soglia per vedere un alert + notifica.
           </div>
         </div>
@@ -477,6 +422,7 @@ function viewDashboard(){
   el.querySelector("#dashAddInspection").onclick = ()=> openInspectionModal();
   el.querySelector("#dashReport").onclick = ()=> openReportModal();
   el.querySelector("#dashNotif").onclick = ()=> requestNotifications();
+  el.querySelector("#dashWhatsapp").onclick = ()=> openWhatsApp(buildQuickUpdateText());
   el.querySelector("#dashLocate").onclick = async ()=> { await requestLocation(); render(); };
   el.querySelector("#dashGoInspections").onclick = ()=> location.hash="#/inspections";
   $$(".rowTrap", el).forEach(r=> r.onclick = ()=>{
@@ -818,7 +764,7 @@ function viewMessages(){
                   <button class="btn small" data-wa="${m.id}">WhatsApp</button>
                 </div>
               </div>
-              <div style="margin-top:10px; color:rgba(231,238,247,.92)">${escapeHtml(m.body).replaceAll("\n","<br/>")}</div>
+              <div style="margin-top:10px; color:rgba(31,42,31,.92)">${escapeHtml(m.body).replaceAll("\n","<br/>")}</div>
               ${m.tags?.length ? `<div style="margin-top:10px">${m.tags.map(t=>`<span class="pill">${escapeHtml(t)}</span>`).join(" ")}</div>` : ""}
             </div>
           `).join("") : `<div class="mini">Nessun messaggio. Usa "Nuovo messaggio".</div>`}
@@ -849,6 +795,7 @@ function viewMessages(){
 
 function viewSettings(){
   const el = document.createElement("div");
+  const contacts = state.settings.contacts || [];
   el.innerHTML = `
     <div class="grid">
       <div class="card" style="grid-column: span 8">
@@ -857,7 +804,7 @@ function viewSettings(){
             <h2>Impostazioni</h2>
             <p>Comportamento, soglie e offline</p>
           </div>
-          <button class="btn small danger" id="btnReset">Reset demo</button>
+          <button class="btn small danger" id="btnReset">Ripristina dati</button>
         </div>
         <div class="bd">
           <div class="row">
@@ -897,7 +844,7 @@ function viewSettings(){
             <button class="btn primary" id="btnSaveSettings">Salva</button>
           </div>
           <div class="mini" style="margin-top:12px">
-            <b>Nota:</b> le notifiche push in background richiedono un backend. In questa demo usiamo Notification API quando l'app e aperta.
+            <b>Nota:</b> le notifiche push in background richiedono un backend. Qui usiamo Notification API quando l'app e aperta.
             WhatsApp usa il numero opzionale (se presente) oppure la scelta del contatto in app.
           </div>
         </div>
@@ -920,6 +867,55 @@ function viewSettings(){
           </div>
         </div>
       </div>
+
+      <div class="card" style="grid-column: span 12">
+        <div class="hd">
+          <div>
+            <h2>Contatti WhatsApp</h2>
+            <p>Numeri rapidi per invio aggiornamenti</p>
+          </div>
+        </div>
+        <div class="bd">
+          <div class="row">
+            <div class="field">
+              <label>Nome</label>
+              <input id="cName" placeholder="Es. Mario Rossi" />
+            </div>
+            <div class="field">
+              <label>Ruolo</label>
+              <input id="cRole" placeholder="Es. Agronomo" />
+            </div>
+            <div class="field">
+              <label>Telefono</label>
+              <input id="cPhone" placeholder="Es. 393331112233" />
+            </div>
+            <div class="field" style="align-self:flex-end">
+              <button class="btn primary" id="cAdd">Aggiungi contatto</button>
+            </div>
+          </div>
+
+          <div style="margin-top:12px">
+            ${contacts.length ? `
+              <table class="table">
+                <thead><tr><th>Nome</th><th>Ruolo</th><th>Telefono</th><th></th></tr></thead>
+                <tbody>
+                  ${contacts.map(c=>`
+                    <tr>
+                      <td>${escapeHtml(c.name)}</td>
+                      <td>${escapeHtml(c.role||"")}</td>
+                      <td>${escapeHtml(c.phone)}</td>
+                      <td style="text-align:right">
+                        <button class="btn small" data-wa="${escapeHtml(c.phone)}">WhatsApp</button>
+                        <button class="btn small danger" data-del="${escapeHtml(c.phone)}">Rimuovi</button>
+                      </td>
+                    </tr>
+                  `).join("")}
+                </tbody>
+              </table>
+            ` : `<div class="mini">Nessun contatto salvato.</div>`}
+          </div>
+        </div>
+      </div>
     </div>
   `;
 
@@ -936,9 +932,41 @@ function viewSettings(){
   };
   el.querySelector("#btnNotif").onclick = ()=> requestNotifications();
   el.querySelector("#btnOffline").onclick = ()=> toast("Offline", "Apri la PWA una volta: l'app shell viene cachata automaticamente.");
-  el.querySelector("#btnReset").onclick = ()=> resetDemo();
+  el.querySelector("#btnReset").onclick = ()=> resetData();
   el.querySelector("#btnExportAll").onclick = ()=> exportData(true);
   el.querySelector("#btnImportAll").onclick = ()=> importData(true);
+
+  const addBtn = $("#cAdd");
+  if(addBtn){
+    addBtn.onclick = async ()=>{
+      const name = $("#cName").value.trim();
+      const role = $("#cRole").value.trim();
+      const phone = cleanPhoneNumber($("#cPhone").value.trim());
+      if(!name || !phone){ toast("Dati mancanti", "Nome e telefono sono obbligatori."); return; }
+      const next = [...contacts.filter(c=>c.phone!==phone), { name, role, phone }];
+      state.settings.contacts = next;
+      await DB.setSetting("app_settings", state.settings);
+      toast("Salvato", "Contatto aggiunto.");
+      render();
+    };
+  }
+  $$("#view [data-wa]", el).forEach(btn=>{
+    btn.onclick = ()=>{
+      const phone = btn.getAttribute("data-wa");
+      if(!phone) return;
+      const text = buildQuickUpdateText();
+      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`, "_blank");
+    };
+  });
+  $$("#view [data-del]", el).forEach(btn=>{
+    btn.onclick = async ()=>{
+      const phone = btn.getAttribute("data-del");
+      state.settings.contacts = contacts.filter(c=>c.phone!==phone);
+      await DB.setSetting("app_settings", state.settings);
+      toast("Rimosso", "Contatto eliminato.");
+      render();
+    };
+  });
 
   return el;
 }
@@ -957,7 +985,7 @@ function viewAbout(){
         <div class="bd">
           <div class="split">
             <div>
-              <div style="font-weight:700; margin-bottom:8px">Cosa fa questa demo</div>
+              <div style="font-weight:700; margin-bottom:8px">Cosa fa questa app</div>
               <ul class="mini">
                 <li>CRUD trappole con coordinate + mappa</li>
                 <li>Ispezioni con catture, condizioni meteo, note</li>
@@ -1032,7 +1060,7 @@ function drawMapMarkers(){
   state.map.markers = [];
 
   for(const t of state.traps){
-    const color = t.status==="Attiva" ? "#5A7D52" : (t.status==="In manutenzione" ? "#C8A24A" : "#8C9A85");
+    const color = t.status==="Attiva" ? "#6A7F47" : (t.status==="In manutenzione" ? "#C39A4D" : "#8C9A85");
     const marker = L.circleMarker([t.lat, t.lng], { radius: 9, color, fillColor: color, fillOpacity: 0.85, weight: 2 });
     marker.addTo(state.map.obj);
     marker.on("click", ()=> openTrapModal(t));
@@ -1042,7 +1070,7 @@ function drawMapMarkers(){
 
   // user location
   if(state.position){
-    const m = L.circleMarker([state.position.lat, state.position.lng], { radius: 9, color:"#4B86B4", fillColor:"#4B86B4", fillOpacity: 0.85, weight: 2 });
+    const m = L.circleMarker([state.position.lat, state.position.lng], { radius: 9, color:"#5D7D8A", fillColor:"#5D7D8A", fillOpacity: 0.85, weight: 2 });
     m.addTo(state.map.obj);
     m.bindTooltip("Tu sei qui", { direction:"top", offset:[0,-8] });
     state.map.markers.push(m);
@@ -1773,7 +1801,31 @@ function buildReportText(){
   const suggestions = suggestActions();
   for(const s of suggestions) lines.push(`- ${s}`);
   lines.push("");
-  lines.push("Generato con OliveFly Sentinel (demo PWA).");
+  lines.push("Generato con OliveFly Sentinel.");
+  return lines.join("\n");
+}
+
+function buildQuickUpdateText(){
+  const now = new Date();
+  const last7 = state.inspections.filter(i => i.date >= daysAgoISO(6));
+  const avg = last7.length ? (last7.reduce((s,i)=>s+i.adults,0)/last7.length) : 0;
+  const larvaeHits = last7.filter(i=>i.larvae>0).length;
+  const top = state.traps
+    .map(t=>({ t, score: computeRiskForTrap(t.id) }))
+    .sort((a,b)=>b.score-a.score)
+    .slice(0,3)
+    .filter(x=>x.score>=45);
+
+  const lines = [];
+  lines.push(`Aggiornamento rapido - ${DEFAULT_SITE.name}`);
+  lines.push(`Data: ${now.toLocaleString("it-IT")}`);
+  lines.push(`Trappole: ${state.traps.length} | Ispezioni 7 gg: ${last7.length}`);
+  lines.push(`Media adulti/ispezione: ${avg.toFixed(1)} | Larve: ${larvaeHits}`);
+  if(top.length){
+    lines.push(`Rischio alto: ${top.map(x=>x.t.name).join(", ")}`);
+  }else{
+    lines.push("Rischio sotto controllo.");
+  }
   return lines.join("\n");
 }
 
@@ -1856,8 +1908,8 @@ async function importData(all=false){
   input.click();
 }
 
-async function resetDemo(){
-  if(!confirm("Reset demo: elimina dati locali e rigenera seed. Continuare?")) return;
+async function resetData(){
+  if(!confirm("Ripristinare i dati iniziali di Bari Loseto?")) return;
   await DB.clear("traps");
   await DB.clear("inspections");
   await DB.clear("alerts");
@@ -1866,7 +1918,7 @@ async function resetDemo(){
   state.map = { obj:null, layer:null, markers:[] };
   await loadAll();
   render();
-  toast("Reset", "Demo rigenerata.");
+  toast("Ripristino", "Dati iniziali ripristinati.");
 }
 
 // ---------- Alerts evaluation ----------
@@ -2126,8 +2178,7 @@ if("serviceWorker" in navigator){
   render();
 
   // Soft prompts
-  setTimeout(()=> toast("Demo pronta", "Vai su Trappole → Apri una trappola → Ispezione."), 700);
-
+  
   // Evaluate nearby alert on launch
   setTimeout(()=> evaluateNearbyAlerts(), 900);
 })();

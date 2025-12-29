@@ -48,6 +48,11 @@ body{
     gap:8px;
   }
   .actions .btn{width:100%}
+  .search input,
+  .field input,
+  .field select,
+  .field textarea,
+  .btn{font-size:16px}
 
   .card{border-radius:14px}
   .toast{width: min(480px, calc(100vw - 28px))}
@@ -64,4 +69,10 @@ body{
   .table th, .table td{font-size:12px}
   .brand{align-items:flex-start}
   .map{height:300px}
+}
+
+@supports (-webkit-touch-callout: none){
+  .main{
+    padding-bottom: calc(110px + var(--safe-bottom));
+  }
 }
