@@ -498,8 +498,7 @@ function viewMap(){
   el.querySelector("#mapCenter").onclick = ()=> centerMap();
   el.querySelector("#mapAdd").onclick = ()=> openTrapModal(null, { useMapCenter:true });
 
-  $$("#viewMap [data-open]", el).forEach(()=>{});
-  $$("#view [data-open]", el).forEach(btn=>{
+  $$("[data-open]", el).forEach(btn=>{
     btn.onclick = ()=>{
       const id = btn.getAttribute("data-open");
       const trap = state.traps.find(t=>t.id===id);
@@ -562,7 +561,7 @@ function viewTraps(){
   el.querySelector("#btnAddTrap").onclick = ()=> openTrapModal();
   el.querySelector("#btnExport").onclick = ()=> exportData();
   el.querySelector("#btnImport").onclick = ()=> importData();
-  $$("#view [data-edit]", el).forEach(btn=>{
+  $$("[data-edit]", el).forEach(btn=>{
     btn.onclick = ()=>{
       const id = btn.getAttribute("data-edit");
       openTrapModal(state.traps.find(t=>t.id===id));
@@ -620,7 +619,7 @@ function viewInspections(){
 
   el.querySelector("#btnAddInspection").onclick = ()=> openInspectionModal();
   el.querySelector("#btnReport").onclick = ()=> openReportModal();
-  $$("#view [data-open]", el).forEach(btn=>{
+  $$("[data-open]", el).forEach(btn=>{
     btn.onclick = ()=>{
       const id = btn.getAttribute("data-open");
       const i = state.inspections.find(x=>x.id===id);
@@ -727,7 +726,7 @@ function viewAlerts(){
   `;
   el.querySelector("#btnAddAlert").onclick = ()=> openAlertModal();
   el.querySelector("#btnEnableNotif").onclick = ()=> requestNotifications();
-  $$("#view [data-edit]", el).forEach(btn=>{
+  $$("[data-edit]", el).forEach(btn=>{
     btn.onclick = ()=>{
       const id = btn.getAttribute("data-edit");
       openAlertModal(state.alerts.find(a=>a.id===id));
@@ -778,13 +777,13 @@ function viewMessages(){
   el.querySelector("#btnAddMsg").onclick = ()=> openMessageModal();
   el.querySelector("#btnShareLog").onclick = ()=> shareLog();
   el.querySelector("#btnShareLogWhatsapp").onclick = ()=> shareLogWhatsApp();
-  $$("#view [data-open]", el).forEach(btn=>{
+  $$("[data-open]", el).forEach(btn=>{
     btn.onclick = ()=>{
       const id = btn.getAttribute("data-open");
       openMessageModal(state.messages.find(m=>m.id===id));
     };
   });
-  $$("#view [data-wa]", el).forEach(btn=>{
+  $$("[data-wa]", el).forEach(btn=>{
     btn.onclick = ()=>{
       const id = btn.getAttribute("data-wa");
       const m = state.messages.find(x=>x.id===id);
@@ -952,7 +951,7 @@ function viewSettings(){
       render();
     };
   }
-  $$("#view [data-wa]", el).forEach(btn=>{
+  $$("[data-wa]", el).forEach(btn=>{
     btn.onclick = ()=>{
       const phone = btn.getAttribute("data-wa");
       if(!phone) return;
@@ -960,7 +959,7 @@ function viewSettings(){
       window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`, "_blank");
     };
   });
-  $$("#view [data-del]", el).forEach(btn=>{
+  $$("[data-del]", el).forEach(btn=>{
     btn.onclick = async ()=>{
       const phone = btn.getAttribute("data-del");
       state.settings.contacts = contacts.filter(c=>c.phone!==phone);
