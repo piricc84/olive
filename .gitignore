@@ -1,0 +1,5 @@
+backend/weights/*.pt
+backend/weights/*.onnx
+backend/.env
+backend/__pycache__/
+backend/.venv/

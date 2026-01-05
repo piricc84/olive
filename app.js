@@ -36,7 +36,7 @@ const state = {
     useBackendWhatsapp: false
   },
   map: { obj: null, layer: null, markers: [] },
-  charts: { weekly: null, byTrap: null, risk: null }
+  charts: { weekly: null, byTrap: null, risk: null, daily: null, larvae: null, status: null }
 };
 
 const DEFAULT_SITE = {
@@ -94,7 +94,10 @@ function getWhatsappTargets(){
 function getNotifyTargetsDetailed(){
   const targets = [];
   const seen = new Set();
-  for(const t of (state.settings.whatsappNotifyTargets || [])){
+  const notify = (state.settings.whatsappNotifyTargets || []);
+  const contacts = (state.settings.contacts || []);
+  const source = notify.length ? notify : contacts;
+  for(const t of source){
     if(t.enabled === false) continue;
     const phone = cleanPhoneNumber(t.phone);
     if(!phone || seen.has(phone)) continue;
@@ -181,6 +184,17 @@ async function sendWhatsappViaBackend(targets, text){
 
 async function sendWhatsappAuto({ title, body, context=null }){
   const targets = getNotifyTargetsDetailed();
+  if(!targets.length){
+    await enqueueWhatsappNotification({
+      title,
+      body,
+      context,
+      targets: [],
+      autoOpen: false,
+      status: "pending"
+    });
+    return { sent: 0, queued: true, noTargets: true };
+  }
   if(state.settings.useBackendWhatsapp && isBackendConfigured() && targets.length){
     const result = await sendWhatsappViaBackend(targets, `${title}\n${body}`);
     if(result.sentTargets.length){
@@ -199,7 +213,7 @@ async function sendWhatsappAuto({ title, body, context=null }){
           body,
           context,
           targets: result.failedTargets,
-          autoOpen: false,
+          autoOpen: state.settings.autoOpenWhatsapp,
           status: "pending"
         });
         return { sent: result.sentTargets.length, queued: true };
@@ -312,6 +326,7 @@ async function loadAll(){
   }
 
   await migrateLegacyPhotos();
+  await syncNotifyTargetsFromContacts();
   updateBadges();
 }
 
@@ -374,6 +389,41 @@ async function seedLoseto(){
     body: "Dati pre-caricati per Bari Loseto. Usa la mappa per verificare le trappole e avvia le ispezioni.",
     tags: ["operativo", "loseto"]
   });
+}
+
+async function syncNotifyTargetsFromContacts(){
+  const contacts = (state.settings.contacts || []).map(c=>({
+    ...c,
+    phone: cleanPhoneNumber(c.phone)
+  })).filter(c=>c.phone);
+  const notify = state.settings.whatsappNotifyTargets || [];
+  const byPhone = new Map();
+  notify.forEach(t=>{
+    const phone = cleanPhoneNumber(t.phone);
+    if(phone) byPhone.set(phone, t);
+  });
+  let changed = false;
+  const nextNotify = [...notify];
+
+  for(const c of contacts){
+    const existing = byPhone.get(c.phone);
+    if(!existing){
+      nextNotify.push({ name: c.name, phone: c.phone, enabled: true });
+      changed = true;
+    }else if(c.name && existing.name !== c.name){
+      existing.name = c.name;
+      changed = true;
+    }
+  }
+
+  if(changed){
+    state.settings.contacts = contacts;
+    state.settings.whatsappNotifyTargets = nextNotify;
+    await DB.setSetting("app_settings", state.settings);
+  }else if(contacts.length !== (state.settings.contacts || []).length){
+    state.settings.contacts = contacts;
+    await DB.setSetting("app_settings", state.settings);
+  }
 }
 
 async function migrateLegacyPhotos(){
@@ -605,7 +655,9 @@ function viewDashboard(){
           <div class="row">
             <button class="btn primary" id="dashAddTrap">Nuova trappola</button>
             <button class="btn" id="dashAddInspection">Nuova ispezione</button>
-            <button class="btn" id="dashReport">Genera report</button>
+            <button class="btn" id="dashReport">Report 7 gg</button>
+            <button class="btn" id="dashReportGeneral">Report generale</button>
+            <button class="btn" id="dashReportDaily">Report giornaliero</button>
             <button class="btn" id="dashNotif">Attiva notifiche</button>
             <button class="btn" id="dashWhatsapp">WhatsApp rapido</button>
           </div>
@@ -680,6 +732,8 @@ function viewDashboard(){
   el.querySelector("#dashAddTrap").onclick = ()=> openTrapModal();
   el.querySelector("#dashAddInspection").onclick = ()=> openInspectionModal();
   el.querySelector("#dashReport").onclick = ()=> openReportModal();
+  el.querySelector("#dashReportGeneral").onclick = ()=> sendGeneralReport();
+  el.querySelector("#dashReportDaily").onclick = ()=> sendDailyReport();
   el.querySelector("#dashNotif").onclick = ()=> requestNotifications();
   el.querySelector("#dashWhatsapp").onclick = ()=> openWhatsApp(buildQuickUpdateText());
   el.querySelector("#dashLocate").onclick = async ()=> { await requestLocation(); render(); };
@@ -911,10 +965,22 @@ function viewAnalytics(){
             <h2>Trend settimanale</h2>
             <p>Somma adulti (ultimi 28 gg)</p>
           </div>
-          <button class="btn small" id="btnRecalc">↻ Ricalcola</button>
+          <button class="btn small" id="btnRecalc">Ricalcola</button>
         </div>
         <div class="bd">
           <canvas id="chWeekly" height="180"></canvas>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 6">
+        <div class="hd">
+          <div>
+            <h2>Ispezioni giornaliere</h2>
+            <p>Conteggio e adulti (ultimi 14 gg)</p>
+          </div>
+        </div>
+        <div class="bd">
+          <canvas id="chDaily" height="180"></canvas>
         </div>
       </div>
 
@@ -930,13 +996,25 @@ function viewAnalytics(){
         </div>
       </div>
 
-      <div class="card" style="grid-column: span 12">
+      <div class="card" style="grid-column: span 6">
+        <div class="hd">
+          <div>
+            <h2>Larve per trappola</h2>
+            <p>Somma larve (ultimi 30 gg)</p>
+          </div>
+        </div>
+        <div class="bd">
+          <canvas id="chLarvae" height="180"></canvas>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 8">
         <div class="hd">
           <div>
             <h2>Rischio (euristica)</h2>
             <p>Adulti + Larve + Temperatura (ultimi 7 gg)</p>
           </div>
-          <button class="btn small" id="btnSuggest">💡 Suggerimenti</button>
+          <button class="btn small" id="btnSuggest">Suggerimenti</button>
         </div>
         <div class="bd">
           <div class="split">
@@ -949,6 +1027,18 @@ function viewAnalytics(){
               <div class="mini" id="suggestBox"></div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 4">
+        <div class="hd">
+          <div>
+            <h2>Stato trappole</h2>
+            <p>Distribuzione per stato</p>
+          </div>
+        </div>
+        <div class="bd">
+          <canvas id="chStatus" height="200"></canvas>
         </div>
       </div>
     </div>
@@ -1447,8 +1537,12 @@ function viewSettings(){
       const role = $("#cRole").value.trim();
       const phone = cleanPhoneNumber($("#cPhone").value.trim());
       if(!name || !phone){ toast("Dati mancanti", "Nome e telefono sono obbligatori."); return; }
-      const next = [...contacts.filter(c=>c.phone!==phone), { name, role, phone }];
+      const next = [...contacts.filter(c=>cleanPhoneNumber(c.phone)!==phone), { name, role, phone }];
       state.settings.contacts = next;
+      const notifyTargets = state.settings.whatsappNotifyTargets || [];
+      if(!notifyTargets.some(t=>cleanPhoneNumber(t.phone)===phone)){
+        state.settings.whatsappNotifyTargets = [...notifyTargets, { name, phone, enabled: true }];
+      }
       await DB.setSetting("app_settings", state.settings);
       toast("Salvato", "Contatto aggiunto.");
       render();
@@ -1465,7 +1559,10 @@ function viewSettings(){
   $$("[data-del]", el).forEach(btn=>{
     btn.onclick = async ()=>{
       const phone = btn.getAttribute("data-del");
-      state.settings.contacts = contacts.filter(c=>c.phone!==phone);
+      state.settings.contacts = contacts.filter(c=>cleanPhoneNumber(c.phone)!==cleanPhoneNumber(phone));
+      if(state.settings.whatsappNotifyTargets){
+        state.settings.whatsappNotifyTargets = state.settings.whatsappNotifyTargets.filter(t=>cleanPhoneNumber(t.phone)!==cleanPhoneNumber(phone));
+      }
       await DB.setSetting("app_settings", state.settings);
       toast("Rimosso", "Contatto eliminato.");
       render();
@@ -1478,7 +1575,7 @@ function viewSettings(){
       const name = $("#wnName").value.trim();
       const phone = cleanPhoneNumber($("#wnPhone").value.trim());
       if(!phone){ toast("Telefono mancante", "Inserisci un numero valido."); return; }
-      const next = [...notifyTargets.filter(t=>t.phone!==phone), { name, phone, enabled: true }];
+      const next = [...notifyTargets.filter(t=>cleanPhoneNumber(t.phone)!==phone), { name, phone, enabled: true }];
       state.settings.whatsappNotifyTargets = next;
       await DB.setSetting("app_settings", state.settings);
       toast("Salvato", "Destinatario aggiunto.");
@@ -1488,7 +1585,7 @@ function viewSettings(){
   $$("[data-wn-del]", el).forEach(btn=>{
     btn.onclick = async ()=>{
       const phone = btn.getAttribute("data-wn-del");
-      state.settings.whatsappNotifyTargets = notifyTargets.filter(t=>t.phone!==phone);
+      state.settings.whatsappNotifyTargets = notifyTargets.filter(t=>cleanPhoneNumber(t.phone)!==cleanPhoneNumber(phone));
       await DB.setSetting("app_settings", state.settings);
       toast("Rimosso", "Destinatario eliminato.");
       render();
@@ -1497,7 +1594,7 @@ function viewSettings(){
   $$("[data-wn-toggle]", el).forEach(sel=>{
     sel.onchange = async ()=>{
       const phone = sel.getAttribute("data-wn-toggle");
-      state.settings.whatsappNotifyTargets = notifyTargets.map(t=>t.phone===phone ? { ...t, enabled: sel.value === "true" } : t);
+      state.settings.whatsappNotifyTargets = notifyTargets.map(t=>cleanPhoneNumber(t.phone)===cleanPhoneNumber(phone) ? { ...t, enabled: sel.value === "true" } : t);
       await DB.setSetting("app_settings", state.settings);
       toast("Aggiornato", "Destinatario aggiornato.");
       render();
@@ -2557,6 +2654,8 @@ async function openReportModal(){
           <button class="btn primary" id="rShare">Condividi</button>
           <button class="btn" id="rWhatsapp">WhatsApp</button>
           <button class="btn" id="rCSV">CSV ispezioni</button>
+          <button class="btn" id="rSendGeneral">Report generale</button>
+          <button class="btn" id="rSendDaily">Report giornaliero</button>
         </div>
         <hr class="sep"/>
         <div class="mini">
@@ -2611,6 +2710,8 @@ async function openReportModal(){
     });
     downloadText("inspections.csv", toCSV(rows), "text/csv");
   };
+  $("#rSendGeneral").onclick = ()=> sendGeneralReport();
+  $("#rSendDaily").onclick = ()=> sendDailyReport();
 }
 
 function buildReportText(){
@@ -2676,6 +2777,115 @@ function buildQuickUpdateText(){
   return lines.join("\n");
 }
 
+function buildGeneralReportText(){
+  const now = new Date();
+  const lines = [];
+  lines.push(`OLIVEFLY SENTINEL - Report generale`);
+  lines.push(`Data: ${now.toLocaleString("it-IT")}`);
+  lines.push("");
+  lines.push(`Trappole: ${state.traps.length} | Ispezioni totali: ${state.inspections.length}`);
+  const avg = state.inspections.length ? (state.inspections.reduce((s,i)=>s+i.adults,0)/state.inspections.length) : 0;
+  const larvaeHits = state.inspections.filter(i=>i.larvae>0).length;
+  lines.push(`Media adulti/ispezione: ${avg.toFixed(1)} | Ispezioni con larve: ${larvaeHits}`);
+  const last = [...state.inspections].sort((a,b)=>b.date.localeCompare(a.date))[0];
+  if(last){
+    const t = state.traps.find(x=>x.id===last.trapId);
+    lines.push(`Ultima ispezione: ${formatDate(last.date)} (${t? t.name : "Trappola"})`);
+  }
+  lines.push("");
+  lines.push("TOP RISCHIO");
+  const ranked = state.traps.map(t=>({ t, score: computeRiskForTrap(t.id) })).sort((a,b)=>b.score-a.score).slice(0,5);
+  ranked.forEach(r=>{
+    lines.push(`- ${r.t.name}: rischio ${r.score}`);
+  });
+  lines.push("");
+  lines.push("Generato con OliveFly Sentinel.");
+  return lines.join("\n");
+}
+
+function buildDailyReportText(dateIso=todayISO()){
+  const now = new Date();
+  const dayInsps = state.inspections.filter(i=>i.date === dateIso);
+  const lines = [];
+  lines.push(`OLIVEFLY SENTINEL - Report giornaliero`);
+  lines.push(`Data: ${now.toLocaleString("it-IT")}`);
+  lines.push(`Giorno: ${formatDate(dateIso)}`);
+  lines.push("");
+  if(!dayInsps.length){
+    lines.push("Nessuna ispezione registrata nel giorno.");
+    return lines.join("\n");
+  }
+  const totalAdults = dayInsps.reduce((s,i)=>s+i.adults,0);
+  const totalFemales = dayInsps.reduce((s,i)=>s+i.females,0);
+  const totalLarvae = dayInsps.reduce((s,i)=>s+i.larvae,0);
+  lines.push(`Ispezioni: ${dayInsps.length} | Adulti: ${totalAdults} | Femmine: ${totalFemales} | Larve: ${totalLarvae}`);
+  lines.push("");
+  lines.push("DETTAGLIO");
+  const byTrap = {};
+  for(const i of dayInsps){
+    byTrap[i.trapId] = byTrap[i.trapId] || { adults:0, females:0, larvae:0 };
+    byTrap[i.trapId].adults += i.adults;
+    byTrap[i.trapId].females += i.females;
+    byTrap[i.trapId].larvae += i.larvae;
+  }
+  Object.keys(byTrap).forEach(trapId=>{
+    const t = state.traps.find(x=>x.id===trapId);
+    const d = byTrap[trapId];
+    lines.push(`- ${t? t.name : "Trappola"}: A ${d.adults}, F ${d.females}, L ${d.larvae}`);
+  });
+  lines.push("");
+  lines.push("Generato con OliveFly Sentinel.");
+  return lines.join("\n");
+}
+
+async function sendGeneralReport(){
+  const text = buildGeneralReportText();
+  const result = await sendWhatsappAuto({
+    title: "Report generale",
+    body: text,
+    context: { type: "report", scope: "general" }
+  });
+  await DB.put("messages", {
+    id: uid("msg"),
+    date: new Date().toISOString(),
+    channel: "Report",
+    title: "Report generale",
+    body: text,
+    tags: ["report","general"]
+  });
+  if(result.sent){
+    toast("WhatsApp inviato", "Report generale inviato.");
+  }else if(result.noTargets){
+    toast("WhatsApp", "Nessun destinatario configurato.");
+  }else{
+    toast("WhatsApp in coda", "Report generale pronto.");
+  }
+}
+
+async function sendDailyReport(){
+  const text = buildDailyReportText();
+  const result = await sendWhatsappAuto({
+    title: "Report giornaliero",
+    body: text,
+    context: { type: "report", scope: "daily", date: todayISO() }
+  });
+  await DB.put("messages", {
+    id: uid("msg"),
+    date: new Date().toISOString(),
+    channel: "Report",
+    title: "Report giornaliero",
+    body: text,
+    tags: ["report","daily"]
+  });
+  if(result.sent){
+    toast("WhatsApp inviato", "Report giornaliero inviato.");
+  }else if(result.noTargets){
+    toast("WhatsApp", "Nessun destinatario configurato.");
+  }else{
+    toast("WhatsApp in coda", "Report giornaliero pronto.");
+  }
+}
+
 function buildPhotoNotificationText(insp, trap, autoCount){
   const lines = [];
   lines.push(`Ispezione con foto`);
@@ -2693,12 +2903,18 @@ async function maybeQueuePhotoNotification(insp, autoCountResult){
   const trap = state.traps.find(t=>t.id===insp.trapId);
   const autoCount = (autoCountResult && autoCountResult.count != null) ? autoCountResult.count : insp.autoCount;
   const body = buildPhotoNotificationText(insp, trap, autoCount);
-  await sendWhatsappAuto({
+  const result = await sendWhatsappAuto({
     title: "Notifica foto",
     body,
     context: { type: "photo", inspectionId: insp.id, trapId: insp.trapId, autoCount }
   });
-  toast("WhatsApp", "Notifica foto pronta.");
+  if(result.sent){
+    toast("WhatsApp inviato", "Notifica foto inviata.");
+  }else if(result.noTargets){
+    toast("WhatsApp", "Nessun destinatario configurato.");
+  }else{
+    toast("WhatsApp in coda", "Notifica foto pronta.");
+  }
 }
 
 function suggestActions(){
@@ -2727,6 +2943,49 @@ function renderSuggestions(){
   const html = `<ul class="mini">${suggestActions().map(s=>`<li>${escapeHtml(s)}</li>`).join("")}</ul>`;
   const box = $("#suggestBox");
   if(box) box.innerHTML = html;
+}
+
+function withAlpha(color, alpha){
+  if(!color) return color;
+  const c = color.trim();
+  if(c.startsWith("rgba")){
+    const parts = c.match(/[\d.]+/g);
+    if(!parts || parts.length < 3) return c;
+    return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${alpha})`;
+  }
+  if(c.startsWith("rgb")){
+    const parts = c.match(/[\d.]+/g);
+    if(!parts || parts.length < 3) return c;
+    return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${alpha})`;
+  }
+  if(c.startsWith("#")){
+    let hex = c.slice(1);
+    if(hex.length === 3){
+      hex = hex.split("").map(x=>x+x).join("");
+    }
+    if(hex.length !== 6) return c;
+    const r = parseInt(hex.slice(0,2), 16);
+    const g = parseInt(hex.slice(2,4), 16);
+    const b = parseInt(hex.slice(4,6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  return c;
+}
+
+function getChartTheme(){
+  const styles = getComputedStyle(document.documentElement);
+  const pick = (key, fallback)=> styles.getPropertyValue(key).trim() || fallback;
+  return {
+    text: pick("--text", "#1B241B"),
+    muted: pick("--muted", "#667064"),
+    border: pick("--border", "rgba(31,42,31,.12)"),
+    primary: pick("--primary", "#5B783B"),
+    primary2: pick("--primary2", "#B7C27B"),
+    warn: pick("--warn", "#C78B3D"),
+    danger: pick("--danger", "#B65A45"),
+    ok: pick("--ok", "#5E9B6A"),
+    info: pick("--info", "#5B7F8F")
+  };
 }
 
 // ---------- Data import/export ----------
@@ -2835,12 +3094,18 @@ async function evaluateAlertsOnInspection(insp){
       hits.map(h=>`- ${h.note||h.name}`).join("\n"),
       `Adulti: ${insp.adults} | Femmine: ${insp.females} | Larve: ${insp.larvae}`
     ].filter(Boolean).join("\n");
-    await sendWhatsappAuto({
+    const result = await sendWhatsappAuto({
       title: "Alert automatico",
       body: waBody,
       context: { type: "alert", inspectionId: insp.id, trapId: insp.trapId, alertIds: hits.map(h=>h.id) }
     });
-    toast("WhatsApp", "Notifica pronta.");
+    if(result.sent){
+      toast("WhatsApp inviato", "Notifica inviata via backend.");
+    }else if(result.noTargets){
+      toast("WhatsApp", "Nessun destinatario configurato.");
+    }else{
+      toast("WhatsApp in coda", "Notifica pronta per invio.");
+    }
   }
 }
 
@@ -2860,12 +3125,18 @@ async function evaluateNearbyAlerts(){
   pushNotification("OliveFly Sentinel — " + title, body);
 
   if(state.settings.enableWhatsappNearby){
-    await sendWhatsappAuto({
+    const result = await sendWhatsappAuto({
       title,
       body,
       context: { type: "nearby", trapId: top.id, distance: Math.round(top.dist) }
     });
-    toast("WhatsApp", "Notifica vicinanza pronta.");
+    if(result.sent){
+      toast("WhatsApp inviato", "Notifica vicinanza inviata.");
+    }else if(result.noTargets){
+      toast("WhatsApp", "Nessun destinatario configurato.");
+    }else{
+      toast("WhatsApp in coda", "Notifica vicinanza pronta.");
+    }
   }
 }
 
@@ -2896,6 +3167,14 @@ function destroyChart(ch){
   try{ if(ch) ch.destroy(); }catch(e){}
 }
 function drawCharts(){
+  const theme = getChartTheme();
+  const gridColor = withAlpha(theme.border, 0.55);
+  const axisText = theme.muted;
+  const legend = { labels: { color: theme.text } };
+  const axisNumber = { beginAtZero: true, ticks: { color: axisText }, grid: { color: gridColor } };
+  const axisCategory = { ticks: { color: axisText }, grid: { display: false } };
+  const palette = [theme.primary, theme.primary2, theme.warn, theme.ok, theme.info, theme.danger];
+
   // Weekly sums last 28 days
   const labels = [];
   const values = [];
@@ -2906,7 +3185,7 @@ function drawCharts(){
     const eIso = end.toISOString().slice(0,10);
     const bucket = state.inspections.filter(i=>i.date>=sIso && i.date<=eIso);
     const sumAdults = bucket.reduce((s,i)=>s+i.adults,0);
-    labels.push(`${formatDate(sIso)} → ${formatDate(eIso)}`);
+    labels.push(`${formatDate(sIso)} - ${formatDate(eIso)}`);
     values.push(sumAdults);
   }
 
@@ -2915,8 +3194,73 @@ function drawCharts(){
     destroyChart(state.charts.weekly);
     state.charts.weekly = new Chart(ctxW, {
       type: "line",
-      data: { labels, datasets: [{ label: "Adulti (somma)", data: values, tension: 0.25 }] },
-      options: { responsive:true, plugins:{ legend:{ display:true } }, scales:{ y:{ beginAtZero:true } } }
+      data: {
+        labels,
+        datasets: [{
+          label: "Adulti (somma)",
+          data: values,
+          borderColor: theme.primary,
+          backgroundColor: withAlpha(theme.primary, 0.2),
+          fill: true,
+          tension: 0.25,
+          pointRadius: 3
+        }]
+      },
+      options: { responsive:true, plugins:{ legend }, scales:{ x: axisCategory, y: axisNumber } }
+    });
+  }
+
+  // Daily inspections last 14 days
+  const dailyLabels = [];
+  const dailyCounts = [];
+  const dailyAdults = [];
+  for(let d=13; d>=0; d--){
+    const iso = daysAgoISO(d);
+    dailyLabels.push(formatDate(iso));
+    const dayInsps = state.inspections.filter(i=>i.date===iso);
+    dailyCounts.push(dayInsps.length);
+    dailyAdults.push(dayInsps.reduce((s,i)=>s+i.adults,0));
+  }
+  const ctxD = $("#chDaily");
+  if(ctxD){
+    destroyChart(state.charts.daily);
+    state.charts.daily = new Chart(ctxD, {
+      data: {
+        labels: dailyLabels,
+        datasets: [
+          {
+            type: "bar",
+            label: "Ispezioni",
+            data: dailyCounts,
+            backgroundColor: withAlpha(theme.primary2, 0.6),
+            borderColor: theme.primary2,
+            borderWidth: 1
+          },
+          {
+            type: "line",
+            label: "Adulti",
+            data: dailyAdults,
+            borderColor: theme.primary,
+            backgroundColor: withAlpha(theme.primary, 0.15),
+            tension: 0.25,
+            yAxisID: "y2"
+          }
+        ]
+      },
+      options: {
+        responsive:true,
+        plugins:{ legend },
+        scales:{
+          x: axisCategory,
+          y: axisNumber,
+          y2: {
+            beginAtZero: true,
+            position: "right",
+            ticks: { color: axisText },
+            grid: { drawOnChartArea: false }
+          }
+        }
+      }
     });
   }
 
@@ -2934,21 +3278,119 @@ function drawCharts(){
     destroyChart(state.charts.byTrap);
     state.charts.byTrap = new Chart(ctxT, {
       type: "bar",
-      data: { labels: tLabels, datasets: [{ label: "Adulti (ultimi 14 gg)", data: tValues }] },
-      options: { responsive:true, plugins:{ legend:{ display:true } }, scales:{ y:{ beginAtZero:true } } }
+      data: {
+        labels: tLabels,
+        datasets: [{
+          label: "Adulti (ultimi 14 gg)",
+          data: tValues,
+          backgroundColor: tLabels.map((_, idx)=> withAlpha(palette[idx % palette.length], 0.55)),
+          borderColor: tLabels.map((_, idx)=> palette[idx % palette.length]),
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive:true,
+        indexAxis: "y",
+        plugins:{ legend:{ display:false, labels: legend.labels } },
+        scales:{ x: axisNumber, y: axisCategory }
+      }
     });
   }
 
-  // Risk radar-ish: use bar
+  // Larvae per trap last 30 days
+  const larvaeFrom = daysAgoISO(29);
+  const larvaeInsps = state.inspections.filter(i=>i.date>=larvaeFrom);
+  const larvaeSums = {};
+  for(const i of larvaeInsps){
+    larvaeSums[i.trapId] = (larvaeSums[i.trapId]||0) + i.larvae;
+  }
+  const lLabels = state.traps.map(t=>t.name);
+  const lValues = state.traps.map(t=>larvaeSums[t.id]||0);
+  const ctxL = $("#chLarvae");
+  if(ctxL){
+    destroyChart(state.charts.larvae);
+    state.charts.larvae = new Chart(ctxL, {
+      type: "bar",
+      data: {
+        labels: lLabels,
+        datasets: [{
+          label: "Larve (ultimi 30 gg)",
+          data: lValues,
+          backgroundColor: withAlpha(theme.warn, 0.55),
+          borderColor: theme.warn,
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive:true,
+        indexAxis: "y",
+        plugins:{ legend:{ display:false, labels: legend.labels } },
+        scales:{ x: axisNumber, y: axisCategory }
+      }
+    });
+  }
+
+  // Risk per trap
   const rLabels = state.traps.map(t=>t.name);
   const rValues = state.traps.map(t=>computeRiskForTrap(t.id));
+  const rColors = rValues.map(score => score >= 75 ? theme.danger : (score >= 45 ? theme.warn : theme.ok));
   const ctxR = $("#chRisk");
   if(ctxR){
     destroyChart(state.charts.risk);
     state.charts.risk = new Chart(ctxR, {
       type: "bar",
-      data: { labels: rLabels, datasets: [{ label: "Risk score (0-100)", data: rValues }] },
-      options: { responsive:true, plugins:{ legend:{ display:true } }, scales:{ y:{ beginAtZero:true, max:100 } } }
+      data: {
+        labels: rLabels,
+        datasets: [{
+          label: "Punteggio (0-100)",
+          data: rValues,
+          backgroundColor: rColors.map(c=>withAlpha(c, 0.6)),
+          borderColor: rColors,
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive:true,
+        plugins:{ legend },
+        scales:{ x: axisCategory, y: { ...axisNumber, max: 100 } }
+      }
+    });
+  }
+
+  // Status distribution
+  const statusMap = { "Attiva":0, "In manutenzione":0, "Dismessa":0, "Altro":0 };
+  for(const t of state.traps){
+    const key = Object.prototype.hasOwnProperty.call(statusMap, t.status) ? t.status : "Altro";
+    statusMap[key] += 1;
+  }
+  const statusEntries = Object.entries(statusMap).filter(([,count])=>count>0);
+  const sLabels = statusEntries.map(([label])=>label);
+  const sValues = statusEntries.map(([,count])=>count);
+  const statusColors = {
+    "Attiva": theme.ok,
+    "In manutenzione": theme.warn,
+    "Dismessa": theme.danger,
+    "Altro": theme.muted
+  };
+  const ctxS = $("#chStatus");
+  if(ctxS){
+    destroyChart(state.charts.status);
+    state.charts.status = new Chart(ctxS, {
+      type: "doughnut",
+      data: {
+        labels: sLabels,
+        datasets: [{
+          data: sValues,
+          backgroundColor: sLabels.map(l=>withAlpha(statusColors[l] || theme.muted, 0.75)),
+          borderColor: sLabels.map(l=>statusColors[l] || theme.muted),
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive:true,
+        cutout: "60%",
+        plugins:{ legend:{ position:"bottom", labels: legend.labels } }
+      }
     });
   }
 
@@ -2965,7 +3407,7 @@ function drawCharts(){
         <tbody>
           ${rows.map(x=>{
             const r = riskLabel(x.score);
-            return `<tr><td>${escapeHtml(x.t.name)}</td><td><span class="pill ${r.cls}">${r.label} • ${x.score}</span></td></tr>`;
+            return `<tr><td>${escapeHtml(x.t.name)}</td><td><span class="pill ${r.cls}">${r.label} - ${x.score}</span></td></tr>`;
           }).join("")}
         </tbody>
       </table>
@@ -2973,7 +3415,6 @@ function drawCharts(){
   }
   renderSuggestions();
 }
-
 // ---------- File helpers ----------
 function downloadText(filename, text, mime){
   const blob = new Blob([text], { type: mime });
@@ -3243,3 +3684,4 @@ if("serviceWorker" in navigator){
   // Evaluate nearby alert on launch
   setTimeout(()=> evaluateNearbyAlerts(), 900);
 })();
+
