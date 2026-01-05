@@ -243,7 +243,8 @@ function getNotifyTargetsDetailed(){
 
   const notify = normalizeNotifyTargets(state.settings.whatsappNotifyTargets || []);
   const contacts = normalizeContacts(state.settings.contacts || []);
-  const source = notify.length ? notify : contacts;
+  const notifyEnabled = notify.filter(t=>t.enabled !== false);
+  const source = notifyEnabled.length ? notifyEnabled : contacts;
   for(const t of source){
     if(t.enabled === false) continue;
     const phone = cleanPhoneNumber(t.phone);
@@ -276,6 +277,30 @@ function getBackendHeaders(){
 
 function isBackendConfigured(){
   return !!normalizeBackendUrl();
+}
+
+async function loadSettings(){
+  let saved = null;
+  try{
+    saved = await DB.getSetting("app_settings", null);
+  }catch(e){}
+  if(!saved){
+    try{
+      const raw = localStorage.getItem("olivefly_settings");
+      if(raw) saved = JSON.parse(raw);
+    }catch(e){}
+  }
+  if(saved) state.settings = { ...state.settings, ...saved };
+}
+
+async function persistSettings(){
+  const payload = { ...state.settings };
+  try{
+    await DB.setSetting("app_settings", payload);
+  }catch(e){}
+  try{
+    localStorage.setItem("olivefly_settings", JSON.stringify(payload));
+  }catch(e){}
 }
 
 async function enqueueWhatsappNotification({ title, body, context=null, targets=null, autoOpen=false, status="pending", sentAt=null }){
@@ -451,8 +476,7 @@ function haversineMeters(a, b){
 
 async function loadAll(){
   // settings (merge defaults)
-  const saved = await DB.getSetting("app_settings", null);
-  if(saved) state.settings = { ...state.settings, ...saved };
+  await loadSettings();
 
   state.traps = await DB.getAll("traps");
   state.inspections = await DB.getAll("inspections");
@@ -564,10 +588,10 @@ async function syncNotifyTargetsFromContacts(){
   if(changed){
     state.settings.contacts = contacts;
     state.settings.whatsappNotifyTargets = nextNotify;
-    await DB.setSetting("app_settings", state.settings);
+    await persistSettings();
   }else if(contacts.length !== (state.settings.contacts || []).length){
     state.settings.contacts = contacts;
-    await DB.setSetting("app_settings", state.settings);
+    await persistSettings();
   }
 }
 
@@ -1862,7 +1886,7 @@ function viewSettings(){
     }
     state.settings.contacts = normalizeContacts(state.settings.contacts || []);
     state.settings.whatsappNotifyTargets = normalizeNotifyTargets(state.settings.whatsappNotifyTargets || []);
-    await DB.setSetting("app_settings", state.settings);
+    await persistSettings();
     toast("Salvato", "Impostazioni aggiornate.");
     updateBadges();
     render();
@@ -1889,7 +1913,7 @@ function viewSettings(){
       if(!notifyTargets.some(t=>cleanPhoneNumber(t.phone)===phone)){
         state.settings.whatsappNotifyTargets = [...notifyTargets, { name, phone, enabled: true }];
       }
-      await DB.setSetting("app_settings", state.settings);
+      await persistSettings();
       toast("Salvato", "Contatto aggiunto.");
       render();
     };
@@ -1909,21 +1933,21 @@ function viewSettings(){
       if(state.settings.whatsappNotifyTargets){
         state.settings.whatsappNotifyTargets = state.settings.whatsappNotifyTargets.filter(t=>cleanPhoneNumber(t.phone)!==cleanPhoneNumber(phone));
       }
-      await DB.setSetting("app_settings", state.settings);
+      await persistSettings();
       toast("Rimosso", "Contatto eliminato.");
       render();
     };
   });
 
   const notifyAdd = $("#wnAdd");
-  if(notifyAdd){
-    notifyAdd.onclick = async ()=>{
-      const name = $("#wnName").value.trim();
-      const phone = cleanPhoneNumber($("#wnPhone").value.trim());
-      if(!phone){ toast("Telefono mancante", "Inserisci un numero valido."); return; }
+    if(notifyAdd){
+      notifyAdd.onclick = async ()=>{
+        const name = $("#wnName").value.trim();
+        const phone = cleanPhoneNumber($("#wnPhone").value.trim());
+        if(!phone){ toast("Telefono mancante", "Inserisci un numero valido."); return; }
       const next = normalizeNotifyTargets([...notifyTargets.filter(t=>cleanPhoneNumber(t.phone)!==phone), { name, phone, enabled: true }]);
       state.settings.whatsappNotifyTargets = next;
-      await DB.setSetting("app_settings", state.settings);
+      await persistSettings();
       toast("Salvato", "Destinatario aggiunto.");
       render();
     };
@@ -1932,7 +1956,7 @@ function viewSettings(){
     btn.onclick = async ()=>{
       const phone = btn.getAttribute("data-wn-del");
       state.settings.whatsappNotifyTargets = notifyTargets.filter(t=>cleanPhoneNumber(t.phone)!==cleanPhoneNumber(phone));
-      await DB.setSetting("app_settings", state.settings);
+      await persistSettings();
       toast("Rimosso", "Destinatario eliminato.");
       render();
     };
@@ -1941,7 +1965,7 @@ function viewSettings(){
     sel.onchange = async ()=>{
       const phone = sel.getAttribute("data-wn-toggle");
       state.settings.whatsappNotifyTargets = notifyTargets.map(t=>cleanPhoneNumber(t.phone)===cleanPhoneNumber(phone) ? { ...t, enabled: sel.value === "true" } : t);
-      await DB.setSetting("app_settings", state.settings);
+      await persistSettings();
       toast("Aggiornato", "Destinatario aggiornato.");
       render();
     };
@@ -2050,7 +2074,7 @@ function viewProtocols(){
   const saveBtn = el.querySelector("#protocolSave");
   const saveZone = async ()=>{
     state.settings.operationZone = zoneSelect.value;
-    await DB.setSetting("app_settings", state.settings);
+    await persistSettings();
     render();
   };
   if(zoneSelect) zoneSelect.onchange = saveZone;
@@ -3399,7 +3423,7 @@ async function ensureDailyFocusMessage(){
     tags: ["focus","daily"]
   });
   state.settings.dailyFocusLastDate = today;
-  await DB.setSetting("app_settings", state.settings);
+  await persistSettings();
   state.messages = await DB.getAll("messages");
 }
 
@@ -3552,7 +3576,7 @@ async function importData(all=false){
       for(const m of (j.messages||[])) await DB.put("messages", m);
       for(const m of (j.media||[])) await DB.put("media", m);
       for(const o of (j.outbox||[])) await DB.put("outbox", o);
-      if(j.settings) { state.settings = { ...state.settings, ...j.settings }; await DB.setSetting("app_settings", state.settings); }
+      if(j.settings) { state.settings = { ...state.settings, ...j.settings }; await persistSettings(); }
 
       toast("Import completato", "Dati caricati.");
       await loadAll();
@@ -3572,7 +3596,8 @@ async function resetData(){
   await DB.clear("messages");
   await DB.clear("media");
   await DB.clear("outbox");
-  await DB.setSetting("app_settings", null);
+  try{ await DB.setSetting("app_settings", null); }catch(e){}
+  try{ localStorage.removeItem("olivefly_settings"); }catch(e){}
   state.map = { obj:null, layer:null, markers:[] };
   await loadAll();
   render();
