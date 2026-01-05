@@ -71,6 +71,8 @@ body{
   .map{height:300px}
   .outbox-item{flex-direction:column; align-items:flex-start}
   .media-thumb{height:100px}
+  .modal{max-height: calc(100dvh - 16px); border-radius:16px}
+  .modal-backdrop{padding: calc(8px + var(--safe-top)) 10px calc(8px + var(--safe-bottom)) 10px}
 }
 
 @supports (-webkit-touch-callout: none){

@@ -29,7 +29,11 @@ const state = {
     autoDetectEnabled: true,
     autoDetectSensitivity: 60,
     autoDetectMinSize: 18,
-    autoDetectApply: true
+    autoDetectApply: true,
+    backendUrl: "",
+    backendApiKey: "",
+    useBackendDetection: false,
+    useBackendWhatsapp: false
   },
   map: { obj: null, layer: null, markers: [] },
   charts: { weekly: null, byTrap: null, risk: null }
@@ -107,7 +111,24 @@ function getNotifyTargetsDetailed(){
   return targets;
 }
 
-async function enqueueWhatsappNotification({ title, body, context=null, targets=null, autoOpen=false }){
+function normalizeBackendUrl(){
+  const raw = String(state.settings.backendUrl || "").trim();
+  if(!raw) return "";
+  return raw.endsWith("/") ? raw.slice(0, -1) : raw;
+}
+
+function getBackendHeaders(){
+  const headers = {};
+  const key = String(state.settings.backendApiKey || "").trim();
+  if(key) headers["x-api-key"] = key;
+  return headers;
+}
+
+function isBackendConfigured(){
+  return !!normalizeBackendUrl();
+}
+
+async function enqueueWhatsappNotification({ title, body, context=null, targets=null, autoOpen=false, status="pending", sentAt=null }){
   const list = (targets && targets.length) ? targets : [null];
   const created = [];
   const createdAt = new Date().toISOString();
@@ -115,13 +136,14 @@ async function enqueueWhatsappNotification({ title, body, context=null, targets=
     const item = {
       id: uid("wa"),
       channel: "whatsapp",
-      status: "pending",
+      status,
       createdAt,
       title,
       body,
       context,
       targetPhone: target?.phone || "",
-      targetLabel: target?.label || ""
+      targetLabel: target?.label || "",
+      sentAt: sentAt || null
     };
     await DB.put("outbox", item);
     created.push(item);
@@ -131,6 +153,68 @@ async function enqueueWhatsappNotification({ title, body, context=null, targets=
     openWhatsApp(body, list[0].phone);
   }
   return created;
+}
+
+async function sendWhatsappViaBackend(targets, text){
+  const baseUrl = normalizeBackendUrl();
+  if(!baseUrl) return { sentTargets: [], failedTargets: targets };
+  const headers = { "Content-Type":"application/json", ...getBackendHeaders() };
+  const sentTargets = [];
+  const failedTargets = [];
+  for(const t of targets){
+    const to = cleanPhoneNumber(t.phone);
+    if(!to){ failedTargets.push(t); continue; }
+    try{
+      const res = await fetch(`${baseUrl}/api/notify/whatsapp`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ to, text })
+      });
+      if(res.ok) sentTargets.push(t);
+      else failedTargets.push(t);
+    }catch(e){
+      failedTargets.push(t);
+    }
+  }
+  return { sentTargets, failedTargets };
+}
+
+async function sendWhatsappAuto({ title, body, context=null }){
+  const targets = getNotifyTargetsDetailed();
+  if(state.settings.useBackendWhatsapp && isBackendConfigured() && targets.length){
+    const result = await sendWhatsappViaBackend(targets, `${title}\n${body}`);
+    if(result.sentTargets.length){
+      await enqueueWhatsappNotification({
+        title,
+        body,
+        context,
+        targets: result.sentTargets,
+        autoOpen: false,
+        status: "sent",
+        sentAt: new Date().toISOString()
+      });
+      if(result.failedTargets.length){
+        await enqueueWhatsappNotification({
+          title,
+          body,
+          context,
+          targets: result.failedTargets,
+          autoOpen: false,
+          status: "pending"
+        });
+        return { sent: result.sentTargets.length, queued: true };
+      }
+      return { sent: result.sentTargets.length, queued: false };
+    }
+  }
+  await enqueueWhatsappNotification({
+    title,
+    body,
+    context,
+    targets,
+    autoOpen: state.settings.autoOpenWhatsapp
+  });
+  return { sent: 0, queued: true };
 }
 
 async function openWhatsappSendModal(item){
@@ -1087,7 +1171,7 @@ function viewSettings(){
           </div>
           <div class="mini" style="margin-top:12px">
             <b>Nota:</b> le notifiche push in background richiedono un backend. Qui usiamo Notification API quando l'app e aperta.
-            Le notifiche WhatsApp finiscono in coda e vanno inviate manualmente.
+            Le notifiche WhatsApp sono in coda manuale se il backend non e configurato.
           </div>
         </div>
       </div>
@@ -1106,6 +1190,46 @@ function viewSettings(){
           <div class="mini">
             Esporta per inviare il backup a un agronomo o caricare su un server.
             Usa export completo per backup e trasferimenti tra dispositivi.
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 12">
+        <div class="hd">
+          <div>
+            <h2>Backend ML & WhatsApp</h2>
+            <p>API per riconoscimento e invio automatico</p>
+          </div>
+        </div>
+        <div class="bd">
+          <div class="row">
+            <div class="field">
+              <label>URL backend</label>
+              <input id="backendUrl" value="${escapeHtml(state.settings.backendUrl||"")}" placeholder="Es. https://api.olivefly.it" />
+            </div>
+            <div class="field">
+              <label>API key (opzionale)</label>
+              <input id="backendApiKey" value="${escapeHtml(state.settings.backendApiKey||"")}" placeholder="x-api-key" />
+            </div>
+          </div>
+          <div class="row" style="margin-top:12px">
+            <div class="field">
+              <label>Usa backend per riconoscimento foto</label>
+              <select id="useBackendDetection">
+                <option value="false" ${!state.settings.useBackendDetection ? "selected":""}>No</option>
+                <option value="true" ${state.settings.useBackendDetection ? "selected":""}>Si</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Usa backend per invio WhatsApp</label>
+              <select id="useBackendWhatsapp">
+                <option value="false" ${!state.settings.useBackendWhatsapp ? "selected":""}>No</option>
+                <option value="true" ${state.settings.useBackendWhatsapp ? "selected":""}>Si</option>
+              </select>
+            </div>
+          </div>
+          <div class="mini" style="margin-top:10px">
+            Se il backend non risponde, l'app usa il riconoscimento locale e la coda WhatsApp manuale.
           </div>
         </div>
       </div>
@@ -1298,6 +1422,10 @@ function viewSettings(){
     state.settings.autoDetectApply = $("#autoDetectApply").value === "true";
     state.settings.autoDetectSensitivity = Number($("#autoDetectSensitivity").value || 60);
     state.settings.autoDetectMinSize = Number($("#autoDetectMinSize").value || 18);
+    state.settings.backendUrl = $("#backendUrl").value.trim();
+    state.settings.backendApiKey = $("#backendApiKey").value.trim();
+    state.settings.useBackendDetection = $("#useBackendDetection").value === "true";
+    state.settings.useBackendWhatsapp = $("#useBackendWhatsapp").value === "true";
     await DB.setSetting("app_settings", state.settings);
     toast("Salvato", "Impostazioni aggiornate.");
     updateBadges();
@@ -1408,6 +1536,7 @@ function viewAbout(){
                 <li>Riconoscimento foto (beta) con conteggio automatico</li>
                 <li>Alert su soglie + vicinanza</li>
                 <li>Notifiche WhatsApp in coda (alert/foto/vicinanza)</li>
+                <li>Backend ML opzionale per riconoscimento e invio WhatsApp</li>
                 <li>Analytics (Chart.js) + rischio euristico</li>
                 <li>Report condivisibile (Web Share / Clipboard)</li>
                 <li>Offline-first (IndexedDB) + PWA installabile</li>
@@ -1511,6 +1640,7 @@ function toCSV(rows){
 // ---------- Modals ----------
 function openModal({title, bodyHTML, footerButtons=[]}){
   const root = $("#modalRoot");
+  document.body.classList.add("modal-open");
   root.classList.remove("hidden");
   root.innerHTML = `
     <div class="modal-backdrop" id="mb">
@@ -1532,6 +1662,7 @@ function openModal({title, bodyHTML, footerButtons=[]}){
 }
 function closeModal(){
   const root = $("#modalRoot");
+  document.body.classList.remove("modal-open");
   root.classList.add("hidden");
   root.innerHTML = "";
 }
@@ -2004,9 +2135,23 @@ async function openInspectionModal(inspection=null, opts={}){
     }
     if(autoCountBox) autoCountBox.innerHTML = "Analisi in corso...";
     try{
-      const res = await detectInsectsFromImage(media.dataUrl, getDetectionOptions());
-      autoCountResult = { count: res.count, at: new Date().toISOString(), score: res.maskRatio };
-      autoCountSource = media.source;
+      let res = null;
+      let source = media.source;
+      if(state.settings.useBackendDetection && isBackendConfigured()){
+        try{
+          res = await detectInsectsFromBackend(media.dataUrl);
+          source = "Backend ML";
+          autoCountResult = { count: res.count, at: new Date().toISOString(), score: res.avgConf };
+        }catch(e){
+          res = await detectInsectsFromImage(media.dataUrl, getDetectionOptions());
+          source = "Locale (fallback)";
+          autoCountResult = { count: res.count, at: new Date().toISOString(), score: res.maskRatio };
+        }
+      }else{
+        res = await detectInsectsFromImage(media.dataUrl, getDetectionOptions());
+        autoCountResult = { count: res.count, at: new Date().toISOString(), score: res.maskRatio };
+      }
+      autoCountSource = source;
       updateAutoCountBox();
       if(sourceSelect && sourceSelect.value === "manual"){
         sourceSelect.value = "image";
@@ -2545,21 +2690,15 @@ function buildPhotoNotificationText(insp, trap, autoCount){
 async function maybeQueuePhotoNotification(insp, autoCountResult){
   if(!state.settings.enableWhatsappPhoto) return;
   if(!insp.mediaIds || !insp.mediaIds.length) return;
-  const targets = getNotifyTargetsDetailed();
-  if(!targets.length){
-    toast("WhatsApp", "Nessun destinatario configurato: notifica in coda senza numero.");
-  }
   const trap = state.traps.find(t=>t.id===insp.trapId);
   const autoCount = (autoCountResult && autoCountResult.count != null) ? autoCountResult.count : insp.autoCount;
   const body = buildPhotoNotificationText(insp, trap, autoCount);
-  await enqueueWhatsappNotification({
+  await sendWhatsappAuto({
     title: "Notifica foto",
     body,
-    context: { type: "photo", inspectionId: insp.id, trapId: insp.trapId, autoCount },
-    targets,
-    autoOpen: state.settings.autoOpenWhatsapp
+    context: { type: "photo", inspectionId: insp.id, trapId: insp.trapId, autoCount }
   });
-  toast("WhatsApp in coda", "Notifica foto pronta per invio.");
+  toast("WhatsApp", "Notifica foto pronta.");
 }
 
 function suggestActions(){
@@ -2696,14 +2835,12 @@ async function evaluateAlertsOnInspection(insp){
       hits.map(h=>`- ${h.note||h.name}`).join("\n"),
       `Adulti: ${insp.adults} | Femmine: ${insp.females} | Larve: ${insp.larvae}`
     ].filter(Boolean).join("\n");
-    await enqueueWhatsappNotification({
+    await sendWhatsappAuto({
       title: "Alert automatico",
       body: waBody,
-      context: { type: "alert", inspectionId: insp.id, trapId: insp.trapId, alertIds: hits.map(h=>h.id) },
-      targets: getNotifyTargetsDetailed(),
-      autoOpen: state.settings.autoOpenWhatsapp
+      context: { type: "alert", inspectionId: insp.id, trapId: insp.trapId, alertIds: hits.map(h=>h.id) }
     });
-    toast("WhatsApp in coda", "Notifica pronta per invio.");
+    toast("WhatsApp", "Notifica pronta.");
   }
 }
 
@@ -2723,14 +2860,12 @@ async function evaluateNearbyAlerts(){
   pushNotification("OliveFly Sentinel — " + title, body);
 
   if(state.settings.enableWhatsappNearby){
-    await enqueueWhatsappNotification({
+    await sendWhatsappAuto({
       title,
       body,
-      context: { type: "nearby", trapId: top.id, distance: Math.round(top.dist) },
-      targets: getNotifyTargetsDetailed(),
-      autoOpen: false
+      context: { type: "nearby", trapId: top.id, distance: Math.round(top.dist) }
     });
-    toast("WhatsApp in coda", "Notifica vicinanza aggiunta.");
+    toast("WhatsApp", "Notifica vicinanza pronta.");
   }
 }
 
@@ -2860,6 +2995,11 @@ function fileToDataUrl(file){
   });
 }
 
+async function dataUrlToBlob(dataUrl){
+  const res = await fetch(dataUrl);
+  return res.blob();
+}
+
 function loadImageFromDataUrl(dataUrl){
   return new Promise((resolve, reject)=>{
     const img = new Image();
@@ -2963,6 +3103,30 @@ async function detectInsectsFromImage(dataUrl, options){
     maskRatio: maskCount / Math.max(1, n),
     width: w,
     height: h
+  };
+}
+
+async function detectInsectsFromBackend(dataUrl){
+  const baseUrl = normalizeBackendUrl();
+  if(!baseUrl) throw new Error("Backend URL missing");
+  const blob = await dataUrlToBlob(dataUrl);
+  const form = new FormData();
+  form.append("file", blob, "capture.jpg");
+  const minConf = Math.max(0.1, Math.min(0.95, (Number(state.settings.autoDetectSensitivity || 60) / 100)));
+  form.append("min_conf", String(minConf));
+  const res = await fetch(`${baseUrl}/api/detect`, {
+    method: "POST",
+    headers: getBackendHeaders(),
+    body: form
+  });
+  if(!res.ok){
+    throw new Error("Backend detect failed");
+  }
+  const j = await res.json();
+  return {
+    count: Number(j.count || 0),
+    avgConf: j.avg_conf ?? null,
+    detections: j.detections || []
   };
 }
 
