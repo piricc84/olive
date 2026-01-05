@@ -33,7 +33,12 @@ const state = {
     backendUrl: "",
     backendApiKey: "",
     useBackendDetection: false,
-    useBackendWhatsapp: false
+    useBackendWhatsapp: false,
+    whatsappNotifyPrimary: "",
+    whatsappNotifyPrimaryOnly: false,
+    dailyFocusEnabled: true,
+    dailyFocusLastDate: "",
+    operationZone: "Centro"
   },
   map: { obj: null, layer: null, markers: [] },
   charts: { weekly: null, byTrap: null, risk: null, daily: null, larvae: null, status: null }
@@ -43,6 +48,99 @@ const DEFAULT_SITE = {
   name: "Bari Loseto",
   lat: 41.031518,
   lng: 16.852941
+};
+
+const ZONE_OPTIONS = ["Nord", "Centro", "Sud", "Isole"];
+const MONTH_NAMES = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"];
+const PROTOCOLS = {
+  Nord: {
+    label: "Nord Italia (clima temperato)",
+    summary: [
+      "Installazione trappole: fine marzo - aprile.",
+      "Picco monitoraggio: giugno - agosto.",
+      "Sostituzione attrattivi: ogni 4-6 settimane."
+    ],
+    calendar: {
+      1: ["Manutenzione attrezzature", "Aggiorna anagrafiche e piano"],
+      2: ["Verifica scorte e attrattivi", "Pianifica siti e accessi"],
+      3: ["Installazione progressiva trappole", "Monitoraggio settimanale"],
+      4: ["Monitoraggio settimanale", "Calibra soglie e regole"],
+      5: ["Monitoraggio 1-2 volte/settimana", "Sostituzione attrattivi"],
+      6: ["Picco: controlli ravvicinati", "Interventi mirati se soglie superate"],
+      7: ["Picco: ispezioni frequenti", "Aggiorna report settimanali"],
+      8: ["Controllo caldo e stress", "Verifica trappole e pannelli"],
+      9: ["Pre-raccolta: monitoraggio e note", "Pianifica eventuali interventi"],
+      10: ["Post-raccolta: riduci frequenza", "Manutenzione trappole"],
+      11: ["Rimozione/archiviazione trappole", "Analisi stagione"],
+      12: ["Report finale", "Piano operativo prossimo anno"]
+    }
+  },
+  Centro: {
+    label: "Centro Italia (mediterraneo)",
+    summary: [
+      "Installazione trappole: marzo.",
+      "Picco monitoraggio: maggio - agosto.",
+      "Sostituzione attrattivi: ogni 4-5 settimane."
+    ],
+    calendar: {
+      1: ["Manutenzione attrezzature", "Aggiorna anagrafiche e piano"],
+      2: ["Preparazione siti", "Verifica scorte e attrattivi"],
+      3: ["Installazione trappole", "Monitoraggio settimanale"],
+      4: ["Monitoraggio 1-2 volte/settimana", "Calibra soglie"],
+      5: ["Picco iniziale: controlli ravvicinati", "Sostituzione attrattivi"],
+      6: ["Picco: ispezioni frequenti", "Interventi mirati se soglie superate"],
+      7: ["Picco: report settimanali", "Verifica danni e note"],
+      8: ["Controllo caldo e stress", "Verifica pannelli e attrattivi"],
+      9: ["Pre-raccolta: monitoraggio mirato", "Riduci frequenza se stabile"],
+      10: ["Post-raccolta: manutenzione", "Pianifica stagione successiva"],
+      11: ["Rimozione/archiviazione trappole", "Analisi stagione"],
+      12: ["Report finale", "Piano operativo prossimo anno"]
+    }
+  },
+  Sud: {
+    label: "Sud Italia (caldo)",
+    summary: [
+      "Installazione trappole: febbraio - marzo.",
+      "Picco monitoraggio: aprile - settembre.",
+      "Sostituzione attrattivi: ogni 3-4 settimane."
+    ],
+    calendar: {
+      1: ["Manutenzione attrezzature", "Verifica scorte"],
+      2: ["Installazione trappole", "Monitoraggio settimanale"],
+      3: ["Monitoraggio 1-2 volte/settimana", "Calibra soglie"],
+      4: ["Picco: controlli ravvicinati", "Sostituzione attrattivi"],
+      5: ["Picco: ispezioni frequenti", "Interventi mirati se soglie superate"],
+      6: ["Picco: report settimanali", "Verifica condizioni meteo"],
+      7: ["Controllo caldo e stress", "Verifica pannelli"],
+      8: ["Picco tardivo: ispezioni frequenti", "Aggiorna report"],
+      9: ["Pre-raccolta: monitoraggio mirato", "Riduci frequenza se stabile"],
+      10: ["Post-raccolta: manutenzione", "Pianifica stagione successiva"],
+      11: ["Rimozione/archiviazione trappole", "Analisi stagione"],
+      12: ["Report finale", "Piano operativo prossimo anno"]
+    }
+  },
+  Isole: {
+    label: "Isole (caldo e ventoso)",
+    summary: [
+      "Installazione trappole: febbraio.",
+      "Picco monitoraggio: aprile - settembre.",
+      "Sostituzione attrattivi: ogni 3-4 settimane."
+    ],
+    calendar: {
+      1: ["Manutenzione attrezzature", "Verifica scorte"],
+      2: ["Installazione trappole", "Monitoraggio settimanale"],
+      3: ["Monitoraggio 1-2 volte/settimana", "Calibra soglie"],
+      4: ["Picco: controlli ravvicinati", "Sostituzione attrattivi"],
+      5: ["Picco: ispezioni frequenti", "Interventi mirati se soglie superate"],
+      6: ["Picco: report settimanali", "Verifica danni vento"],
+      7: ["Controllo caldo e stress", "Verifica pannelli e fissaggi"],
+      8: ["Picco tardivo: ispezioni frequenti", "Aggiorna report"],
+      9: ["Pre-raccolta: monitoraggio mirato", "Riduci frequenza se stabile"],
+      10: ["Post-raccolta: manutenzione", "Pianifica stagione successiva"],
+      11: ["Rimozione/archiviazione trappole", "Analisi stagione"],
+      12: ["Report finale", "Piano operativo prossimo anno"]
+    }
+  }
 };
 
 function toast(title, msg=""){
@@ -63,6 +161,39 @@ function cleanPhoneNumber(n){
   return String(n || "").replace(/[^\d]/g, "");
 }
 
+function normalizeContacts(list){
+  return (list || [])
+    .map(c=>({
+      name: String(c?.name || "").trim(),
+      role: String(c?.role || "").trim(),
+      phone: cleanPhoneNumber(c?.phone || "")
+    }))
+    .filter(c=>c.phone);
+}
+
+function normalizeNotifyTargets(list){
+  return (list || [])
+    .map(t=>({
+      name: String(t?.name || "").trim(),
+      phone: cleanPhoneNumber(t?.phone || ""),
+      enabled: t?.enabled !== false
+    }))
+    .filter(t=>t.phone);
+}
+
+function contactLabelForPhone(phone){
+  const norm = cleanPhoneNumber(phone);
+  if(!norm) return "";
+  const contacts = normalizeContacts(state.settings.contacts || []);
+  const c = contacts.find(x=>x.phone===norm);
+  if(c){
+    return c.role ? `${c.name || norm} - ${c.role}` : (c.name || norm);
+  }
+  const notify = normalizeNotifyTargets(state.settings.whatsappNotifyTargets || []);
+  const n = notify.find(x=>x.phone===norm);
+  return n?.name || norm;
+}
+
 function getWhatsAppUrl(text, phoneOverride=null){
   const phone = cleanPhoneNumber(phoneOverride ?? state.settings.whatsappNumber);
   const encoded = encodeURIComponent(text);
@@ -76,17 +207,25 @@ function openWhatsApp(text, phoneOverride=null){
 function getWhatsappTargets(){
   const targets = [];
   const seen = new Set();
+  const primaryPhone = cleanPhoneNumber(state.settings.whatsappNotifyPrimary || "");
+  if(primaryPhone){
+    targets.push({ label: contactLabelForPhone(primaryPhone) || "Destinatario principale", phone: primaryPhone });
+    seen.add(primaryPhone);
+  }
+  const notify = normalizeNotifyTargets(state.settings.whatsappNotifyTargets || []);
+  const contacts = normalizeContacts(state.settings.contacts || []);
+  const merged = [...notify, ...contacts];
+  for(const c of merged){
+    const phone = cleanPhoneNumber(c.phone);
+    if(!phone || seen.has(phone)) continue;
+    const label = c.role ? `${c.name || phone} - ${c.role}` : (c.name || phone);
+    targets.push({ label, phone });
+    seen.add(phone);
+  }
   const def = cleanPhoneNumber(state.settings.whatsappNumber);
   if(def){
     targets.push({ label: "Numero predefinito", phone: def });
     seen.add(def);
-  }
-  for(const c of (state.settings.contacts || [])){
-    const phone = cleanPhoneNumber(c.phone);
-    if(!phone || seen.has(phone)) continue;
-    const label = c.role ? `${c.name} • ${c.role}` : c.name;
-    targets.push({ label, phone });
-    seen.add(phone);
   }
   return targets;
 }
@@ -94,8 +233,16 @@ function getWhatsappTargets(){
 function getNotifyTargetsDetailed(){
   const targets = [];
   const seen = new Set();
-  const notify = (state.settings.whatsappNotifyTargets || []);
-  const contacts = (state.settings.contacts || []);
+  const primaryPhone = cleanPhoneNumber(state.settings.whatsappNotifyPrimary || "");
+  const primaryOnly = !!state.settings.whatsappNotifyPrimaryOnly;
+  if(primaryPhone){
+    targets.push({ label: contactLabelForPhone(primaryPhone) || "Destinatario principale", phone: primaryPhone });
+    seen.add(primaryPhone);
+    if(primaryOnly) return targets;
+  }
+
+  const notify = normalizeNotifyTargets(state.settings.whatsappNotifyTargets || []);
+  const contacts = normalizeContacts(state.settings.contacts || []);
   const source = notify.length ? notify : contacts;
   for(const t of source){
     if(t.enabled === false) continue;
@@ -328,6 +475,7 @@ async function loadAll(){
   await migrateLegacyPhotos();
   await syncNotifyTargetsFromContacts();
   updateBadges();
+  await ensureDailyFocusMessage();
 }
 
 async function seedLoseto(){
@@ -392,18 +540,15 @@ async function seedLoseto(){
 }
 
 async function syncNotifyTargetsFromContacts(){
-  const contacts = (state.settings.contacts || []).map(c=>({
-    ...c,
-    phone: cleanPhoneNumber(c.phone)
-  })).filter(c=>c.phone);
-  const notify = state.settings.whatsappNotifyTargets || [];
+  const contacts = normalizeContacts(state.settings.contacts || []);
+  const notify = normalizeNotifyTargets(state.settings.whatsappNotifyTargets || []);
   const byPhone = new Map();
-  notify.forEach(t=>{
+  const nextNotify = notify.map(t=>({ ...t }));
+  nextNotify.forEach(t=>{
     const phone = cleanPhoneNumber(t.phone);
     if(phone) byPhone.set(phone, t);
   });
   let changed = false;
-  const nextNotify = [...notify];
 
   for(const c of contacts){
     const existing = byPhone.get(c.phone);
@@ -573,6 +718,73 @@ function computeRiskForTrap(trapId){
   return Math.round(score);
 }
 
+function computeNeighborPressure(trap, radius){
+  if(!trap || !Number.isFinite(trap.lat) || !Number.isFinite(trap.lng)) return { count: 0, score: 0 };
+  let count = 0;
+  let score = 0;
+  for(const other of state.traps){
+    if(other.id === trap.id) continue;
+    if(!Number.isFinite(other.lat) || !Number.isFinite(other.lng)) continue;
+    const dist = haversineMeters(trap, other);
+    if(dist <= radius){
+      count++;
+      score += computeRiskForTrap(other.id);
+    }
+  }
+  return { count, score };
+}
+
+function getDailyFocusTraps(max=5){
+  const radius = Math.max(50, Number(state.settings.nearRadiusM || 300));
+  const list = state.traps.map(t=>{
+    const last = lastInspectionForTrap(t.id);
+    const daysSince = last ? daysSinceISO(last.date) : null;
+    const risk = computeRiskForTrap(t.id);
+    const adults = last ? Number(last.adults || 0) : 0;
+    const larvae = last ? Number(last.larvae || 0) : 0;
+    const recencyScore = daysSince == null ? 30 : clamp(daysSince * 3, 0, 30);
+    const catchScore = clamp(adults * 2 + larvae * 6, 0, 35);
+    const neighbor = computeNeighborPressure(t, radius);
+    const neighborScore = clamp(neighbor.score / 4, 0, 25);
+    const distance = (state.position && Number.isFinite(t.lat) && Number.isFinite(t.lng))
+      ? haversineMeters(state.position, t)
+      : null;
+    const proximityScore = distance != null ? clamp(((radius * 1.5) - distance) / (radius * 1.5) * 10, 0, 10) : 0;
+    const score = Math.round(risk * 0.6 + recencyScore + catchScore + neighborScore + proximityScore);
+    const reasons = [];
+    if(!last) reasons.push("Mai ispezionata");
+    if(daysSince != null && daysSince >= 7) reasons.push(`Ultima ispezione ${daysSince} gg fa`);
+    if(larvae > 0) reasons.push("Larve rilevate");
+    if(adults >= Number(state.settings.defaultThreshold || 0)) reasons.push("Adulti sopra soglia");
+    if(risk >= 75) reasons.push("Rischio alto");
+    else if(risk >= 45) reasons.push("Rischio medio");
+    if(neighbor.count >= 2) reasons.push(`Area densa (${neighbor.count} trappole vicine)`);
+    if(distance != null && distance <= radius) reasons.push(`Vicina a te (${Math.round(distance)} m)`);
+    if(!reasons.length) reasons.push("Monitoraggio di routine");
+    return { trap: t, score, risk, last, daysSince, reasons, neighbor };
+  }).sort((a,b)=>b.score-a.score);
+  return list.slice(0, Math.max(1, max || 5));
+}
+
+function getProtocolConfig(zone){
+  return PROTOCOLS[zone] || PROTOCOLS.Centro;
+}
+
+function getUpcomingProtocolTasks(zone, monthsAhead){
+  const cfg = getProtocolConfig(zone);
+  const now = new Date();
+  const out = [];
+  for(let i=0; i<monthsAhead; i++){
+    const idx = (now.getMonth() + i) % 12;
+    const monthNum = idx + 1;
+    const tasks = cfg.calendar[monthNum] || [];
+    if(tasks.length){
+      out.push({ month: MONTH_NAMES[idx], tasks });
+    }
+  }
+  return out;
+}
+
 function render(){
   state.route = routeFromHash();
   setActiveNav(state.route);
@@ -585,6 +797,7 @@ function render(){
   else if(route === "traps") view.appendChild(viewTraps());
   else if(route === "inspections") view.appendChild(viewInspections());
   else if(route === "analytics") view.appendChild(viewAnalytics());
+  else if(route === "protocols") view.appendChild(viewProtocols());
   else if(route === "alerts") view.appendChild(viewAlerts());
   else if(route === "messages") view.appendChild(viewMessages());
   else if(route === "settings") view.appendChild(viewSettings());
@@ -617,6 +830,8 @@ function viewDashboard(){
   const last7 = state.inspections.filter(i => i.date >= daysAgoISO(6));
   const avgAdults = last7.length ? (last7.reduce((s,i)=>s+i.adults,0)/last7.length) : 0;
   const larvaeHits = last7.filter(i=>i.larvae>0).length;
+  const focus = getDailyFocusTraps(5);
+  const focusEnabled = state.settings.dailyFocusEnabled !== false;
 
   const el = document.createElement("div");
   el.innerHTML = `
@@ -698,6 +913,40 @@ function viewDashboard(){
       <div class="card" style="grid-column: span 12">
         <div class="hd">
           <div>
+            <h2>Suggerimenti giornalieri</h2>
+            <p>Priorita basata su rischio, ultima ispezione e densita</p>
+          </div>
+          <div class="row">
+            <button class="btn small" id="dashFocusRefresh">Aggiorna</button>
+            <button class="btn small" id="dashFocusSend">Invia WhatsApp</button>
+          </div>
+        </div>
+        <div class="bd">
+          ${!focusEnabled ? `<div class="mini">Suggerimenti disattivati. Riattivali da Impostazioni.</div>` : (focus.length ? `
+            <table class="table">
+              <thead><tr><th>Trappola</th><th>Score</th><th>Ultima ispezione</th><th>Motivi</th></tr></thead>
+              <tbody>
+                ${focus.map(f=>{
+                  const last = f.last ? formatDate(f.last.date) : "mai";
+                  const r = riskLabel(f.risk);
+                  return `
+                    <tr data-trap="${f.trap.id}" class="rowTrapFocus">
+                      <td>${escapeHtml(f.trap.name)}</td>
+                      <td><span class="pill ${r.cls}">${f.score}</span></td>
+                      <td>${last}</td>
+                      <td>${escapeHtml(f.reasons.join(", "))}</td>
+                    </tr>
+                  `;
+                }).join("")}
+              </tbody>
+            </table>
+          ` : `<div class="mini">Nessun suggerimento disponibile. Registra nuove ispezioni per affinare le priorita.</div>`)}
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 12">
+        <div class="hd">
+          <div>
             <h2>Ultime ispezioni</h2>
             <p>Trend rapido e note operative</p>
           </div>
@@ -738,7 +987,16 @@ function viewDashboard(){
   el.querySelector("#dashWhatsapp").onclick = ()=> openWhatsApp(buildQuickUpdateText());
   el.querySelector("#dashLocate").onclick = async ()=> { await requestLocation(); render(); };
   el.querySelector("#dashGoInspections").onclick = ()=> location.hash="#/inspections";
+  const focusRefresh = el.querySelector("#dashFocusRefresh");
+  if(focusRefresh) focusRefresh.onclick = ()=> render();
+  const focusSend = el.querySelector("#dashFocusSend");
+  if(focusSend) focusSend.onclick = ()=> sendDailyFocus();
   $$(".rowTrap", el).forEach(r=> r.onclick = ()=>{
+    const id = r.getAttribute("data-trap");
+    location.hash = "#/traps";
+    setTimeout(()=> openTrapModal(state.traps.find(t=>t.id===id)), 0);
+  });
+  $$(".rowTrapFocus", el).forEach(r=> r.onclick = ()=>{
     const id = r.getAttribute("data-trap");
     location.hash = "#/traps";
     setTimeout(()=> openTrapModal(state.traps.find(t=>t.id===id)), 0);
@@ -1210,8 +1468,28 @@ function viewMessages(){
 
 function viewSettings(){
   const el = document.createElement("div");
-  const contacts = state.settings.contacts || [];
-  const notifyTargets = state.settings.whatsappNotifyTargets || [];
+  const contacts = normalizeContacts(state.settings.contacts || []);
+  const notifyTargets = normalizeNotifyTargets(state.settings.whatsappNotifyTargets || []);
+  const primaryPhone = cleanPhoneNumber(state.settings.whatsappNotifyPrimary || "");
+  const primaryOnly = !!state.settings.whatsappNotifyPrimaryOnly;
+  const opZone = state.settings.operationZone || "Centro";
+  const dailyFocusEnabled = state.settings.dailyFocusEnabled !== false;
+  const candidates = [];
+  const seen = new Set();
+  const defPhone = cleanPhoneNumber(state.settings.whatsappNumber || "");
+  if(defPhone){
+    candidates.push({ label: "Numero predefinito", phone: defPhone });
+    seen.add(defPhone);
+  }
+  for(const c of [...notifyTargets, ...contacts]){
+    const phone = cleanPhoneNumber(c.phone);
+    if(!phone || seen.has(phone)) continue;
+    const label = c.role ? `${c.name || phone} - ${c.role}` : (c.name || phone);
+    candidates.push({ label, phone });
+    seen.add(phone);
+  }
+  const primaryIsCandidate = primaryPhone && candidates.some(c=>c.phone===primaryPhone);
+  const primaryInputValue = primaryIsCandidate ? "" : primaryPhone;
   el.innerHTML = `
     <div class="grid">
       <div class="card" style="grid-column: span 8">
@@ -1250,6 +1528,21 @@ function viewSettings(){
               <select id="enableWeather">
                 <option value="true" ${state.settings.enableWeather ? "selected":""}>Attivo</option>
                 <option value="false" ${!state.settings.enableWeather ? "selected":""}>Disattivo</option>
+              </select>
+            </div>
+          </div>
+          <div class="row" style="margin-top:12px">
+            <div class="field">
+              <label>Zona operativa</label>
+              <select id="opZone">
+                ${ZONE_OPTIONS.map(z=>`<option value="${z}" ${opZone===z ? "selected":""}>${z}</option>`).join("")}
+              </select>
+            </div>
+            <div class="field">
+              <label>Suggerimenti giornalieri</label>
+              <select id="dailyFocusEnabled">
+                <option value="true" ${dailyFocusEnabled ? "selected":""}>Attivi</option>
+                <option value="false" ${!dailyFocusEnabled ? "selected":""}>Disattivi</option>
               </select>
             </div>
           </div>
@@ -1362,8 +1655,29 @@ function viewSettings(){
               </select>
             </div>
           </div>
+          <div class="row" style="margin-top:12px">
+            <div class="field">
+              <label>Destinatario principale</label>
+              <select id="whatsappPrimarySelect">
+                <option value="">Nessuno</option>
+                ${candidates.map(c=>`<option value="${escapeHtml(c.phone)}" ${c.phone===primaryPhone ? "selected":""}>${escapeHtml(c.label)} (${escapeHtml(c.phone)})</option>`).join("")}
+              </select>
+            </div>
+            <div class="field">
+              <label>Numero principale manuale</label>
+              <input id="whatsappPrimaryNumber" value="${escapeHtml(primaryInputValue)}" placeholder="Es. 393331112233" />
+            </div>
+            <div class="field">
+              <label>Solo destinatario principale</label>
+              <select id="whatsappPrimaryOnly">
+                <option value="false" ${!primaryOnly ? "selected":""}>No</option>
+                <option value="true" ${primaryOnly ? "selected":""}>Si</option>
+              </select>
+            </div>
+          </div>
           <div class="mini" style="margin-top:10px">
             Le notifiche vengono preparate in coda: l'invio richiede conferma manuale in WhatsApp.
+            Imposta un destinatario principale per le notifiche automatiche.
           </div>
           <hr class="sep"/>
           <div class="row">
@@ -1386,7 +1700,7 @@ function viewSettings(){
                 <tbody>
                   ${notifyTargets.map(t=>`
                     <tr>
-                      <td>${escapeHtml(t.name||"")}</td>
+                      <td>${escapeHtml(t.name || "—")}</td>
                       <td>${escapeHtml(t.phone)}</td>
                       <td>
                         <select data-wn-toggle="${escapeHtml(t.phone)}">
@@ -1457,7 +1771,7 @@ function viewSettings(){
         <div class="bd">
           <div class="row">
             <div class="field">
-              <label>Nome</label>
+              <label>Nome (opzionale)</label>
               <input id="cName" placeholder="Es. Mario Rossi" />
             </div>
             <div class="field">
@@ -1480,8 +1794,8 @@ function viewSettings(){
                 <tbody>
                   ${contacts.map(c=>`
                     <tr>
-                      <td>${escapeHtml(c.name)}</td>
-                      <td>${escapeHtml(c.role||"")}</td>
+                      <td>${escapeHtml(c.name || "—")}</td>
+                      <td>${escapeHtml(c.role || "—")}</td>
                       <td>${escapeHtml(c.phone)}</td>
                       <td style="text-align:right">
                         <button class="btn small" data-wa="${escapeHtml(c.phone)}">WhatsApp</button>
@@ -1504,10 +1818,16 @@ function viewSettings(){
     state.settings.whatsappNumber = $("#whatsNumber").value.trim();
     state.settings.enableNearbyAlert = $("#enableNearby").value === "true";
     state.settings.enableWeather = $("#enableWeather").value === "true";
+    state.settings.operationZone = $("#opZone").value;
+    state.settings.dailyFocusEnabled = $("#dailyFocusEnabled").value === "true";
     state.settings.enableWhatsappAlerts = $("#enableWhatsappAlerts").value === "true";
     state.settings.enableWhatsappNearby = $("#enableWhatsappNearby").value === "true";
     state.settings.enableWhatsappPhoto = $("#enableWhatsappPhoto").value === "true";
     state.settings.autoOpenWhatsapp = $("#autoOpenWhatsapp").value === "true";
+    const primaryInput = cleanPhoneNumber($("#whatsappPrimaryNumber").value.trim());
+    const primarySelect = cleanPhoneNumber($("#whatsappPrimarySelect").value || "");
+    state.settings.whatsappNotifyPrimary = primaryInput || primarySelect;
+    state.settings.whatsappNotifyPrimaryOnly = $("#whatsappPrimaryOnly").value === "true";
     state.settings.autoDetectEnabled = $("#autoDetectEnabled").value === "true";
     state.settings.autoDetectApply = $("#autoDetectApply").value === "true";
     state.settings.autoDetectSensitivity = Number($("#autoDetectSensitivity").value || 60);
@@ -1516,6 +1836,32 @@ function viewSettings(){
     state.settings.backendApiKey = $("#backendApiKey").value.trim();
     state.settings.useBackendDetection = $("#useBackendDetection").value === "true";
     state.settings.useBackendWhatsapp = $("#useBackendWhatsapp").value === "true";
+    const quickContactPhone = cleanPhoneNumber(($("#cPhone")?.value || "").trim());
+    if(quickContactPhone){
+      const quickName = ( $("#cName")?.value || "" ).trim();
+      const quickRole = ( $("#cRole")?.value || "" ).trim();
+      const baseContacts = normalizeContacts(state.settings.contacts || []);
+      state.settings.contacts = normalizeContacts([
+        ...baseContacts.filter(c=>c.phone!==quickContactPhone),
+        { name: quickName, role: quickRole, phone: quickContactPhone }
+      ]);
+      const baseNotify = normalizeNotifyTargets(state.settings.whatsappNotifyTargets || []);
+      if(!baseNotify.some(t=>t.phone===quickContactPhone)){
+        baseNotify.push({ name: quickName, phone: quickContactPhone, enabled: true });
+      }
+      state.settings.whatsappNotifyTargets = baseNotify;
+    }
+    const quickNotifyPhone = cleanPhoneNumber(($("#wnPhone")?.value || "").trim());
+    if(quickNotifyPhone){
+      const quickNotifyName = ( $("#wnName")?.value || "" ).trim();
+      const baseNotify = normalizeNotifyTargets(state.settings.whatsappNotifyTargets || []);
+      state.settings.whatsappNotifyTargets = normalizeNotifyTargets([
+        ...baseNotify.filter(t=>t.phone!==quickNotifyPhone),
+        { name: quickNotifyName, phone: quickNotifyPhone, enabled: true }
+      ]);
+    }
+    state.settings.contacts = normalizeContacts(state.settings.contacts || []);
+    state.settings.whatsappNotifyTargets = normalizeNotifyTargets(state.settings.whatsappNotifyTargets || []);
     await DB.setSetting("app_settings", state.settings);
     toast("Salvato", "Impostazioni aggiornate.");
     updateBadges();
@@ -1536,8 +1882,8 @@ function viewSettings(){
       const name = $("#cName").value.trim();
       const role = $("#cRole").value.trim();
       const phone = cleanPhoneNumber($("#cPhone").value.trim());
-      if(!name || !phone){ toast("Dati mancanti", "Nome e telefono sono obbligatori."); return; }
-      const next = [...contacts.filter(c=>cleanPhoneNumber(c.phone)!==phone), { name, role, phone }];
+      if(!phone){ toast("Telefono mancante", "Inserisci un numero valido."); return; }
+      const next = normalizeContacts([...contacts.filter(c=>cleanPhoneNumber(c.phone)!==phone), { name, role, phone }]);
       state.settings.contacts = next;
       const notifyTargets = state.settings.whatsappNotifyTargets || [];
       if(!notifyTargets.some(t=>cleanPhoneNumber(t.phone)===phone)){
@@ -1575,7 +1921,7 @@ function viewSettings(){
       const name = $("#wnName").value.trim();
       const phone = cleanPhoneNumber($("#wnPhone").value.trim());
       if(!phone){ toast("Telefono mancante", "Inserisci un numero valido."); return; }
-      const next = [...notifyTargets.filter(t=>cleanPhoneNumber(t.phone)!==phone), { name, phone, enabled: true }];
+      const next = normalizeNotifyTargets([...notifyTargets.filter(t=>cleanPhoneNumber(t.phone)!==phone), { name, phone, enabled: true }]);
       state.settings.whatsappNotifyTargets = next;
       await DB.setSetting("app_settings", state.settings);
       toast("Salvato", "Destinatario aggiunto.");
@@ -1612,6 +1958,106 @@ function viewSettings(){
   return el;
 }
 
+function viewProtocols(){
+  const zone = state.settings.operationZone || "Centro";
+  const cfg = getProtocolConfig(zone);
+  const shortPlan = getUpcomingProtocolTasks(zone, 2);
+  const longPlan = getUpcomingProtocolTasks(zone, 6);
+  const zoneOptions = ZONE_OPTIONS.map(z=>`<option value="${z}" ${z===zone ? "selected":""}>${z}</option>`).join("");
+  const calendarRows = MONTH_NAMES.map((m, idx)=>{
+    const tasks = cfg.calendar[idx+1] || [];
+    const text = tasks.length ? tasks.map(t=>escapeHtml(t)).join("<br/>") : "—";
+    return `<tr><td>${m}</td><td>${text}</td></tr>`;
+  }).join("");
+
+  const renderPlan = (plan)=> plan.length
+    ? plan.map(p=>`<div class="mini" style="margin-bottom:10px"><b>${p.month}</b><br/>${p.tasks.map(t=>escapeHtml(t)).join("<br/>")}</div>`).join("")
+    : `<div class="mini">Nessuna attivita programmata nel periodo selezionato.</div>`;
+
+  const el = document.createElement("div");
+  el.innerHTML = `
+    <div class="grid">
+      <div class="card" style="grid-column: span 12">
+        <div class="hd">
+          <div>
+            <h2>Protocolli standard</h2>
+            <p>${escapeHtml(cfg.label)}</p>
+          </div>
+          <div class="row">
+            <button class="btn small" id="protocolSave">Salva zona</button>
+          </div>
+        </div>
+        <div class="bd">
+          <div class="row">
+            <div class="field">
+              <label>Zona operativa</label>
+              <select id="protocolZone">${zoneOptions}</select>
+            </div>
+          </div>
+          <ul class="mini">
+            ${cfg.summary.map(s=>`<li>${escapeHtml(s)}</li>`).join("")}
+          </ul>
+          <div class="mini" style="margin-top:10px">
+            Linee guida generali: adegua alle prescrizioni regionali e al supporto del tuo agronomo.
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 6">
+        <div class="hd">
+          <div>
+            <h2>Breve periodo</h2>
+            <p>Azioni nei prossimi 30-60 giorni</p>
+          </div>
+        </div>
+        <div class="bd">
+          ${renderPlan(shortPlan)}
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 6">
+        <div class="hd">
+          <div>
+            <h2>Lungo periodo</h2>
+            <p>Azioni nei prossimi 4-6 mesi</p>
+          </div>
+        </div>
+        <div class="bd">
+          ${renderPlan(longPlan)}
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 12">
+        <div class="hd">
+          <div>
+            <h2>Calendario annuale</h2>
+            <p>Azioni consigliate per mese</p>
+          </div>
+        </div>
+        <div class="bd">
+          <table class="table">
+            <thead><tr><th>Mese</th><th>Attivita</th></tr></thead>
+            <tbody>
+              ${calendarRows}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const zoneSelect = el.querySelector("#protocolZone");
+  const saveBtn = el.querySelector("#protocolSave");
+  const saveZone = async ()=>{
+    state.settings.operationZone = zoneSelect.value;
+    await DB.setSetting("app_settings", state.settings);
+    render();
+  };
+  if(zoneSelect) zoneSelect.onchange = saveZone;
+  if(saveBtn) saveBtn.onclick = saveZone;
+  return el;
+}
+
 function viewAbout(){
   const el = document.createElement("div");
   el.innerHTML = `
@@ -1635,6 +2081,8 @@ function viewAbout(){
                 <li>Notifiche WhatsApp in coda (alert/foto/vicinanza)</li>
                 <li>Backend ML opzionale per riconoscimento e invio WhatsApp</li>
                 <li>Analytics (Chart.js) + rischio euristico</li>
+                <li>Suggerimenti giornalieri su priorita ispezioni</li>
+                <li>Protocolli e calendario operativo per zone italiane</li>
                 <li>Report condivisibile (Web Share / Clipboard)</li>
                 <li>Offline-first (IndexedDB) + PWA installabile</li>
               </ul>
@@ -1720,6 +2168,14 @@ function daysAgoISO(n){
   const d = new Date();
   d.setDate(d.getDate()-n);
   return d.toISOString().slice(0,10);
+}
+
+function daysSinceISO(iso){
+  if(!iso) return null;
+  const d = new Date(iso);
+  if(Number.isNaN(d.getTime())) return null;
+  const diff = Date.now() - d.getTime();
+  return Math.max(0, Math.floor(diff / 86400000));
 }
 
 function lastInspectionForTrap(trapId){
@@ -2884,6 +3340,67 @@ async function sendDailyReport(){
   }else{
     toast("WhatsApp in coda", "Report giornaliero pronto.");
   }
+}
+
+function buildDailyFocusMessage(list=null){
+  const focus = (list && list.length) ? list : getDailyFocusTraps(5);
+  if(!focus.length) return "";
+  const lines = [];
+  lines.push(`Suggerimenti giornalieri (${formatDate(todayISO())})`);
+  focus.forEach((f, idx)=>{
+    const last = f.last ? formatDate(f.last.date) : "mai";
+    const reasons = f.reasons.slice(0,3).join(", ");
+    lines.push(`${idx+1}. ${f.trap.name} | Score ${f.score} | Ultima: ${last} | ${reasons}`);
+  });
+  lines.push("");
+  lines.push("Generato con OliveFly Sentinel.");
+  return lines.join("\n");
+}
+
+async function sendDailyFocus(){
+  const focus = getDailyFocusTraps(5);
+  if(!focus.length){ toast("Suggerimenti", "Nessuna trappola disponibile."); return; }
+  const text = buildDailyFocusMessage(focus);
+  const result = await sendWhatsappAuto({
+    title: "Suggerimenti giornalieri",
+    body: text,
+    context: { type: "daily_focus", date: todayISO() }
+  });
+  await DB.put("messages", {
+    id: uid("msg"),
+    date: new Date().toISOString(),
+    channel: "Suggerimenti",
+    title: "Suggerimenti giornalieri",
+    body: text,
+    tags: ["focus","daily"]
+  });
+  if(result.sent){
+    toast("WhatsApp inviato", "Suggerimenti inviati.");
+  }else if(result.noTargets){
+    toast("WhatsApp", "Nessun destinatario configurato.");
+  }else{
+    toast("WhatsApp in coda", "Suggerimenti pronti.");
+  }
+}
+
+async function ensureDailyFocusMessage(){
+  if(!state.settings.dailyFocusEnabled) return;
+  const today = todayISO();
+  if(state.settings.dailyFocusLastDate === today) return;
+  const focus = getDailyFocusTraps(5);
+  if(!focus.length) return;
+  const text = buildDailyFocusMessage(focus);
+  await DB.put("messages", {
+    id: uid("msg"),
+    date: new Date().toISOString(),
+    channel: "Suggerimenti",
+    title: "Priorita giornaliere",
+    body: text,
+    tags: ["focus","daily"]
+  });
+  state.settings.dailyFocusLastDate = today;
+  await DB.setSetting("app_settings", state.settings);
+  state.messages = await DB.getAll("messages");
 }
 
 function buildPhotoNotificationText(insp, trap, autoCount){
