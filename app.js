@@ -11,6 +11,8 @@ const state = {
   inspections: [],
   alerts: [],
   messages: [],
+  media: [],
+  outbox: [],
   settings: {
     unit: "trappole",
     nearRadiusM: 300,
@@ -18,7 +20,9 @@ const state = {
     enableWeather: true,
     enableNearbyAlert: true,
     whatsappNumber: "",
-    contacts: []
+    contacts: [],
+    enableWhatsappAlerts: true,
+    enableWhatsappNearby: false
   },
   map: { obj: null, layer: null, markers: [] },
   charts: { weekly: null, byTrap: null, risk: null }
@@ -48,14 +52,96 @@ function cleanPhoneNumber(n){
   return String(n || "").replace(/[^\d]/g, "");
 }
 
-function getWhatsAppUrl(text){
-  const phone = cleanPhoneNumber(state.settings.whatsappNumber);
+function getWhatsAppUrl(text, phoneOverride=null){
+  const phone = cleanPhoneNumber(phoneOverride ?? state.settings.whatsappNumber);
   const encoded = encodeURIComponent(text);
   return phone ? `https://wa.me/${phone}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
 }
 
-function openWhatsApp(text){
-  window.open(getWhatsAppUrl(text), "_blank");
+function openWhatsApp(text, phoneOverride=null){
+  window.open(getWhatsAppUrl(text, phoneOverride), "_blank");
+}
+
+function getWhatsappTargets(){
+  const targets = [];
+  const seen = new Set();
+  const def = cleanPhoneNumber(state.settings.whatsappNumber);
+  if(def){
+    targets.push({ label: "Numero predefinito", phone: def });
+    seen.add(def);
+  }
+  for(const c of (state.settings.contacts || [])){
+    const phone = cleanPhoneNumber(c.phone);
+    if(!phone || seen.has(phone)) continue;
+    const label = c.role ? `${c.name} • ${c.role}` : c.name;
+    targets.push({ label, phone });
+    seen.add(phone);
+  }
+  return targets;
+}
+
+async function enqueueWhatsappNotification({ title, body, context=null }){
+  const item = {
+    id: uid("wa"),
+    channel: "whatsapp",
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    title,
+    body,
+    context
+  };
+  await DB.put("outbox", item);
+  state.outbox = await DB.getAll("outbox");
+  return item;
+}
+
+async function openWhatsappSendModal(item){
+  const targets = getWhatsappTargets();
+  const text = `${item.title}\n${item.body}`;
+  const options = targets.length
+    ? targets.map((t, idx)=>`<option value="${t.phone}" ${idx===0 ? "selected":""}>${escapeHtml(t.label)} (${escapeHtml(t.phone)})</option>`).join("")
+    : `<option value="">Nessun contatto salvato</option>`;
+  const body = `
+    <div class="row">
+      <div class="field">
+        <label>Destinatario</label>
+        <select id="waTarget" ${targets.length ? "" : "disabled"}>${options}</select>
+      </div>
+      <div class="field">
+        <label>Numero manuale (opzionale)</label>
+        <input id="waCustom" placeholder="Es. 393331112233" />
+      </div>
+    </div>
+    <div class="field" style="margin-top:12px">
+      <label>Testo messaggio (modificabile)</label>
+      <textarea id="waText">${escapeHtml(text)}</textarea>
+    </div>
+    <div class="mini" style="margin-top:10px">
+      L'invio avviene aprendo WhatsApp con testo precompilato.
+    </div>
+  `;
+  openModal({
+    title: "Invio WhatsApp",
+    bodyHTML: body,
+    footerButtons: [
+      { id:"waCancel", label:"Annulla" },
+      { id:"waSend", label:"Apri WhatsApp", kind:"primary" }
+    ]
+  });
+  $("#waCancel").onclick = closeModal;
+  $("#waSend").onclick = async ()=>{
+    const custom = cleanPhoneNumber($("#waCustom").value.trim());
+    const selected = $("#waTarget")?.value || "";
+    const phone = custom || selected || "";
+    const msg = $("#waText").value.trim();
+    if(!msg){ toast("Testo mancante", "Inserisci un messaggio."); return; }
+    openWhatsApp(msg, phone);
+    const next = { ...item, status:"sent", sentAt: new Date().toISOString(), targetPhone: phone, body: msg };
+    await DB.put("outbox", next);
+    await loadAll();
+    closeModal();
+    render();
+  };
 }
 
 function formatDate(iso){
@@ -85,6 +171,8 @@ async function loadAll(){
   state.inspections = await DB.getAll("inspections");
   state.alerts = await DB.getAll("alerts");
   state.messages = await DB.getAll("messages");
+  state.media = await DB.getAll("media");
+  state.outbox = await DB.getAll("outbox");
 
   // seed if empty
   if(state.traps.length === 0){
@@ -93,8 +181,11 @@ async function loadAll(){
     state.inspections = await DB.getAll("inspections");
     state.alerts = await DB.getAll("alerts");
     state.messages = await DB.getAll("messages");
+    state.media = await DB.getAll("media");
+    state.outbox = await DB.getAll("outbox");
   }
 
+  await migrateLegacyPhotos();
   updateBadges();
 }
 
@@ -137,7 +228,10 @@ async function seedLoseto(){
       wind: i.wind,
       notes: i.notes,
       operator: "Team Loseto",
-      photoDataUrl: null
+      source: "manual",
+      sourceRef: "",
+      sourceNote: "",
+      mediaIds: []
     });
   }
 
@@ -154,6 +248,28 @@ async function seedLoseto(){
     body: "Dati pre-caricati per Bari Loseto. Usa la mappa per verificare le trappole e avvia le ispezioni.",
     tags: ["operativo", "loseto"]
   });
+}
+
+async function migrateLegacyPhotos(){
+  const legacy = state.inspections.filter(i=>i.photoDataUrl && !i.mediaIds);
+  if(!legacy.length) return;
+  for(const insp of legacy){
+    const mediaId = uid("media");
+    await DB.put("media", {
+      id: mediaId,
+      inspectionId: insp.id,
+      trapId: insp.trapId,
+      kind: "image",
+      dataUrl: insp.photoDataUrl,
+      createdAt: insp.date || new Date().toISOString(),
+      note: "legacy-photo"
+    });
+    insp.mediaIds = [mediaId];
+    delete insp.photoDataUrl;
+    await DB.put("inspections", insp);
+  }
+  state.media = await DB.getAll("media");
+  state.inspections = await DB.getAll("inspections");
 }
 
 function updateBadges(){
@@ -246,6 +362,21 @@ function riskLabel(score){
   if(score >= 75) return { label:"Alto", cls:"danger" };
   if(score >= 45) return { label:"Medio", cls:"warn" };
   return { label:"Basso", cls:"ok" };
+}
+
+function sourceLabel(code){
+  const map = { manual:"Manuale", image:"Foto", sensor:"Sensore", import:"Import" };
+  return map[code] || "Manuale";
+}
+
+function sourceClass(code){
+  const map = { manual:"", image:"info", sensor:"warn", import:"ok" };
+  return map[code] || "";
+}
+
+function mediaCountForInspection(insp){
+  const ids = insp?.mediaIds?.length || 0;
+  return ids || (insp?.photoDataUrl ? 1 : 0);
 }
 
 function computeRiskForTrap(trapId){
@@ -572,7 +703,7 @@ function viewTraps(){
 }
 
 function viewInspections(){
-  const items = applySearchFilter([...state.inspections].sort((a,b)=>b.date.localeCompare(a.date)), ["notes","operator","date"]);
+  const items = applySearchFilter([...state.inspections].sort((a,b)=>b.date.localeCompare(a.date)), ["notes","operator","date","source","sourceRef","sourceNote"]);
   const el = document.createElement("div");
   el.innerHTML = `
     <div class="grid">
@@ -590,13 +721,18 @@ function viewInspections(){
         <div class="bd">
           <table class="table">
             <thead><tr>
-              <th>Data</th><th>Trappola</th><th>Adulti</th><th>Femmine</th><th>Larve</th><th>Meteo</th><th>Note</th><th></th>
+              <th>Data</th><th>Trappola</th><th>Adulti</th><th>Femmine</th><th>Larve</th><th>Meteo</th><th>Fonte</th><th>Media</th><th>Note</th><th></th>
             </tr></thead>
             <tbody>
               ${items.map(i=>{
                 const t = state.traps.find(x=>x.id===i.trapId);
                 const risk = i.larvae>0 ? "danger" : (i.adults>=5 ? "warn" : "ok");
                 const meteo = `${i.temperature ?? "—"}°C • ${i.humidity ?? "—"}% • ${i.wind ?? "—"} km/h`;
+                const source = sourceLabel(i.source);
+                const sourceCls = sourceClass(i.source);
+                const sourceRef = i.sourceRef ? `<div class="mini">${escapeHtml(i.sourceRef)}</div>` : "";
+                const mediaCount = mediaCountForInspection(i);
+                const mediaBtn = mediaCount ? `<button class="btn small" data-media="${i.id}">Foto (${mediaCount})</button>` : `<span class="mini">—</span>`;
                 return `
                   <tr>
                     <td>${formatDate(i.date)}</td>
@@ -605,6 +741,8 @@ function viewInspections(){
                     <td>${i.females}</td>
                     <td>${i.larvae}</td>
                     <td>${escapeHtml(meteo)}</td>
+                    <td><span class="pill ${sourceCls}">${source}</span>${sourceRef}</td>
+                    <td>${mediaBtn}</td>
                     <td>${escapeHtml(i.notes||"")}</td>
                     <td style="text-align:right"><button class="btn small" data-open="${i.id}">Apri</button></td>
                   </tr>
@@ -624,6 +762,13 @@ function viewInspections(){
       const id = btn.getAttribute("data-open");
       const i = state.inspections.find(x=>x.id===id);
       openInspectionModal(i);
+    };
+  });
+  $$("[data-media]", el).forEach(btn=>{
+    btn.onclick = ()=>{
+      const id = btn.getAttribute("data-media");
+      const i = state.inspections.find(x=>x.id===id);
+      if(i) openMediaModal(i);
     };
   });
   return el;
@@ -737,9 +882,39 @@ function viewAlerts(){
 
 function viewMessages(){
   const msgs = applySearchFilter([...state.messages].sort((a,b)=>b.date.localeCompare(a.date)), ["title","body","channel","tags"]);
+  const pendingOutbox = state.outbox
+    .filter(o=>o.channel==="whatsapp" && o.status!=="sent")
+    .sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
   const el = document.createElement("div");
   el.innerHTML = `
     <div class="grid">
+      <div class="card" style="grid-column: span 12">
+        <div class="hd">
+          <div>
+            <h2>Notifiche WhatsApp</h2>
+            <p>Coda invii (richiede azione manuale)</p>
+          </div>
+          <div class="row">
+            <button class="btn" id="btnOutboxClear">Svuota coda</button>
+          </div>
+        </div>
+        <div class="bd">
+          ${pendingOutbox.length ? pendingOutbox.map(o=>`
+            <div class="outbox-item">
+              <div>
+                <div style="font-weight:700">${escapeHtml(o.title)}</div>
+                <div class="mini">${new Date(o.createdAt||Date.now()).toLocaleString("it-IT")}</div>
+                <div class="outbox-body">${escapeHtml(o.body||"").replaceAll("\n","<br/>")}</div>
+              </div>
+              <div class="row">
+                <button class="btn small" data-outbox-send="${o.id}">Invia</button>
+                <button class="btn small danger" data-outbox-del="${o.id}">Rimuovi</button>
+              </div>
+            </div>
+          `).join("") : `<div class="mini">Nessuna notifica WhatsApp in coda.</div>`}
+        </div>
+      </div>
+
       <div class="card" style="grid-column: span 12">
         <div class="hd">
           <div>
@@ -777,6 +952,28 @@ function viewMessages(){
   el.querySelector("#btnAddMsg").onclick = ()=> openMessageModal();
   el.querySelector("#btnShareLog").onclick = ()=> shareLog();
   el.querySelector("#btnShareLogWhatsapp").onclick = ()=> shareLogWhatsApp();
+  el.querySelector("#btnOutboxClear").onclick = async ()=>{
+    if(!pendingOutbox.length) return;
+    if(!confirm("Svuotare la coda WhatsApp?")) return;
+    for(const o of pendingOutbox) await DB.delete("outbox", o.id);
+    await loadAll();
+    render();
+  };
+  $$("[data-outbox-send]", el).forEach(btn=>{
+    btn.onclick = ()=>{
+      const id = btn.getAttribute("data-outbox-send");
+      const item = state.outbox.find(o=>o.id===id);
+      if(item) openWhatsappSendModal(item);
+    };
+  });
+  $$("[data-outbox-del]", el).forEach(btn=>{
+    btn.onclick = async ()=>{
+      const id = btn.getAttribute("data-outbox-del");
+      await DB.delete("outbox", id);
+      await loadAll();
+      render();
+    };
+  });
   $$("[data-open]", el).forEach(btn=>{
     btn.onclick = ()=>{
       const id = btn.getAttribute("data-open");
@@ -838,6 +1035,22 @@ function viewSettings(){
               </select>
             </div>
           </div>
+          <div class="row" style="margin-top:12px">
+            <div class="field">
+              <label>WhatsApp su alert</label>
+              <select id="enableWhatsappAlerts">
+                <option value="true" ${state.settings.enableWhatsappAlerts ? "selected":""}>Attivo</option>
+                <option value="false" ${!state.settings.enableWhatsappAlerts ? "selected":""}>Disattivo</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>WhatsApp su vicinanza</label>
+              <select id="enableWhatsappNearby">
+                <option value="true" ${state.settings.enableWhatsappNearby ? "selected":""}>Attivo</option>
+                <option value="false" ${!state.settings.enableWhatsappNearby ? "selected":""}>Disattivo</option>
+              </select>
+            </div>
+          </div>
           <hr class="sep"/>
           <div class="row">
             <button class="btn" id="btnNotif">Notifiche</button>
@@ -846,7 +1059,7 @@ function viewSettings(){
           </div>
           <div class="mini" style="margin-top:12px">
             <b>Nota:</b> le notifiche push in background richiedono un backend. Qui usiamo Notification API quando l'app e aperta.
-            WhatsApp usa il numero opzionale (se presente) oppure la scelta del contatto in app.
+            Le notifiche WhatsApp finiscono in coda e vanno inviate manualmente.
           </div>
         </div>
       </div>
@@ -926,6 +1139,8 @@ function viewSettings(){
     state.settings.whatsappNumber = $("#whatsNumber").value.trim();
     state.settings.enableNearbyAlert = $("#enableNearby").value === "true";
     state.settings.enableWeather = $("#enableWeather").value === "true";
+    state.settings.enableWhatsappAlerts = $("#enableWhatsappAlerts").value === "true";
+    state.settings.enableWhatsappNearby = $("#enableWhatsappNearby").value === "true";
     await DB.setSetting("app_settings", state.settings);
     toast("Salvato", "Impostazioni aggiornate.");
     updateBadges();
@@ -956,7 +1171,7 @@ function viewSettings(){
       const phone = btn.getAttribute("data-wa");
       if(!phone) return;
       const text = buildQuickUpdateText();
-      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`, "_blank");
+      openWhatsApp(text, phone);
     };
   });
   $$("[data-del]", el).forEach(btn=>{
@@ -1272,7 +1487,11 @@ async function openTrapModal(trap=null, opts={}){
       await DB.delete("traps", trap.id);
       // cascade delete inspections
       const insps = state.inspections.filter(i=>i.trapId===trap.id);
-      for(const i of insps) await DB.delete("inspections", i.id);
+      for(const i of insps){
+        const mediaItems = await DB.indexGetAll("media", "by_inspectionId", i.id);
+        for(const m of mediaItems) await DB.delete("media", m.id);
+        await DB.delete("inspections", i.id);
+      }
       toast("Eliminata", trap.name);
       await loadAll();
       closeModal();
@@ -1316,6 +1535,17 @@ async function openInspectionModal(inspection=null, opts={}){
   const trapOptions = state.traps.map(t=>`<option value="${t.id}" ${inspection?.trapId===t.id ? "selected":""}>${escapeHtml(t.name)}</option>`).join("");
   const selectedTrapId = inspection?.trapId || preTrap?.id || (state.traps[0]?.id || "");
   const selectedTrap = state.traps.find(t=>t.id===selectedTrapId) || preTrap || null;
+  const defaultSource = inspection?.source || ((inspection?.mediaIds?.length || inspection?.photoDataUrl) ? "image" : "manual");
+  const sourceRef = inspection?.sourceRef || "";
+  const sourceNote = inspection?.sourceNote || "";
+  const sourcePayload = inspection?.sourcePayload || "";
+  const payloadHidden = defaultSource === "sensor" ? "" : "hidden";
+  const existingMedia = inspection?.mediaIds?.length
+    ? (await Promise.all(inspection.mediaIds.map(id=>DB.get("media", id)))).filter(Boolean)
+    : [];
+  const legacyMedia = (!existingMedia.length && inspection?.photoDataUrl)
+    ? [{ id:"legacy", dataUrl: inspection.photoDataUrl, legacy: true, filename: "Foto" }]
+    : [];
 
   // Weather auto (optional)
   let weatherHint = "";
@@ -1379,8 +1609,35 @@ async function openInspectionModal(inspection=null, opts={}){
           </div>
           <div class="field">
             <label>Foto (opzionale)</label>
-            <input id="iPhoto" type="file" accept="image/*" />
+            <input id="iPhoto" type="file" accept="image/*" capture="environment" multiple />
+            <div class="media-list" id="iMediaList"></div>
           </div>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <div class="field">
+            <label>Metodo acquisizione</label>
+            <select id="iSource">
+              <option value="manual" ${defaultSource==="manual" ? "selected":""}>Manuale</option>
+              <option value="image" ${defaultSource==="image" ? "selected":""}>Foto</option>
+              <option value="sensor" ${defaultSource==="sensor" ? "selected":""}>Sensore/IoT</option>
+              <option value="import" ${defaultSource==="import" ? "selected":""}>Import</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Riferimento (opzionale)</label>
+            <input id="iSourceRef" value="${escapeHtml(sourceRef)}" placeholder="Es. CAM-12, CSV-2025-02" />
+          </div>
+        </div>
+
+        <div class="field" style="margin-top:12px">
+          <label>Note acquisizione (opzionale)</label>
+          <textarea id="iSourceNote" placeholder="Dettagli su foto, sensori o import...">${escapeHtml(sourceNote)}</textarea>
+        </div>
+
+        <div class="field ${payloadHidden}" style="margin-top:12px" id="iSourcePayloadWrap">
+          <label>Payload sensore (opzionale)</label>
+          <textarea id="iSourcePayload" placeholder='Es. {"adults":4,"temp":25.1}'>${escapeHtml(sourcePayload)}</textarea>
         </div>
       </div>
 
@@ -1430,11 +1687,95 @@ async function openInspectionModal(inspection=null, opts={}){
   refreshSide();
   $("#iTrap").onchange = refreshSide;
 
+  const pendingMedia = [];
+  const removedMediaIds = new Set();
+  const mediaList = $("#iMediaList");
+  function renderMediaList(){
+    if(!mediaList) return;
+    const activeExisting = [...existingMedia, ...legacyMedia].filter(m=>!removedMediaIds.has(m.id));
+    if(!activeExisting.length && !pendingMedia.length){
+      mediaList.innerHTML = `<div class="mini">Nessuna foto allegata.</div>`;
+      return;
+    }
+    const cards = [];
+    for(const m of activeExisting){
+      cards.push(`
+        <div class="media-card">
+          <img class="media-thumb" src="${m.dataUrl}" alt="Foto ispezione" />
+          <div class="media-meta">
+            <div>${escapeHtml(m.filename || "Foto")}</div>
+            <button class="btn small danger" data-remove-media="${m.id}">Rimuovi</button>
+          </div>
+        </div>
+      `);
+    }
+    pendingMedia.forEach((m, idx)=>{
+      cards.push(`
+        <div class="media-card pending">
+          <img class="media-thumb" src="${m.dataUrl}" alt="Nuova foto" />
+          <div class="media-meta">
+            <div>${escapeHtml(m.filename || "Nuova foto")}</div>
+            <button class="btn small danger" data-remove-pending="${idx}">Rimuovi</button>
+          </div>
+        </div>
+      `);
+    });
+    mediaList.innerHTML = `<div class="media-grid small">${cards.join("")}</div>`;
+  }
+  renderMediaList();
+  if(mediaList){
+    mediaList.onclick = (e)=>{
+      const btnExisting = e.target.closest("[data-remove-media]");
+      const btnPending = e.target.closest("[data-remove-pending]");
+      if(btnExisting){
+        removedMediaIds.add(btnExisting.getAttribute("data-remove-media"));
+        renderMediaList();
+      }
+      if(btnPending){
+        const idx = Number(btnPending.getAttribute("data-remove-pending"));
+        if(Number.isFinite(idx)) pendingMedia.splice(idx, 1);
+        renderMediaList();
+      }
+    };
+  }
+
+  const sourceSelect = $("#iSource");
+  const payloadWrap = $("#iSourcePayloadWrap");
+  const updateSourceUI = ()=>{
+    if(payloadWrap && sourceSelect){
+      payloadWrap.classList.toggle("hidden", sourceSelect.value !== "sensor");
+    }
+  };
+  if(sourceSelect){
+    sourceSelect.onchange = updateSourceUI;
+    updateSourceUI();
+  }
+
+  const photoInput = $("#iPhoto");
+  if(photoInput){
+    photoInput.onchange = async ()=>{
+      const files = [...(photoInput.files || [])];
+      for(const file of files){
+        if(!file.type.startsWith("image/")) continue;
+        const dataUrl = await fileToDataUrl(file);
+        pendingMedia.push({ dataUrl, filename: file.name, size: file.size, type: file.type });
+      }
+      if(files.length && sourceSelect && sourceSelect.value === "manual"){
+        sourceSelect.value = "image";
+        updateSourceUI();
+      }
+      photoInput.value = "";
+      renderMediaList();
+    };
+  }
+
   $("#iCancel").onclick = closeModal;
 
   if(isEdit){
     $("#iDelete").onclick = async ()=>{
       if(!confirm("Eliminare l'ispezione?")) return;
+      const mediaItems = await DB.indexGetAll("media", "by_inspectionId", inspection.id);
+      for(const m of mediaItems) await DB.delete("media", m.id);
       await DB.delete("inspections", inspection.id);
       toast("Eliminata", "Ispezione rimossa.");
       await loadAll();
@@ -1492,14 +1833,57 @@ async function openInspectionModal(inspection=null, opts={}){
       return;
     }
 
-    let photoDataUrl = inspection?.photoDataUrl || null;
-    const file = $("#iPhoto").files?.[0];
-    if(file){
-      photoDataUrl = await fileToDataUrl(file);
+    const inspId = inspection?.id || uid("insp");
+    const source = $("#iSource").value || "manual";
+    const sourceRefVal = $("#iSourceRef").value.trim();
+    const sourceNoteVal = $("#iSourceNote").value.trim();
+    const sourcePayloadVal = $("#iSourcePayload").value.trim();
+
+    const keepExisting = existingMedia.filter(m=>!removedMediaIds.has(m.id));
+    const removeExisting = existingMedia.filter(m=>removedMediaIds.has(m.id));
+    for(const m of removeExisting){
+      await DB.delete("media", m.id);
+    }
+    for(const m of keepExisting){
+      if(m.trapId !== trapId || m.inspectionId !== inspId){
+        await DB.put("media", { ...m, trapId, inspectionId: inspId });
+      }
+    }
+    const mediaIds = keepExisting.map(m=>m.id);
+
+    const legacyKeep = legacyMedia.filter(m=>!removedMediaIds.has(m.id));
+    for(const m of legacyKeep){
+      const mediaId = uid("media");
+      await DB.put("media", {
+        id: mediaId,
+        inspectionId: inspId,
+        trapId,
+        kind: "image",
+        dataUrl: m.dataUrl,
+        createdAt: $("#iDate").value || new Date().toISOString(),
+        note: "legacy-photo"
+      });
+      mediaIds.push(mediaId);
+    }
+
+    for(const m of pendingMedia){
+      const mediaId = uid("media");
+      await DB.put("media", {
+        id: mediaId,
+        inspectionId: inspId,
+        trapId,
+        kind: "image",
+        dataUrl: m.dataUrl,
+        filename: m.filename || "Foto",
+        size: m.size,
+        contentType: m.type,
+        createdAt: new Date().toISOString()
+      });
+      mediaIds.push(mediaId);
     }
 
     const obj = {
-      id: inspection?.id || uid("insp"),
+      id: inspId,
       trapId,
       date: $("#iDate").value,
       adults: Number($("#iAdults").value||0),
@@ -1510,7 +1894,11 @@ async function openInspectionModal(inspection=null, opts={}){
       wind: $("#iWind").value==="" ? null : Number($("#iWind").value),
       notes: $("#iNotes").value.trim(),
       operator: $("#iOp").value.trim(),
-      photoDataUrl
+      source,
+      sourceRef: sourceRefVal,
+      sourceNote: sourceNoteVal,
+      sourcePayload: sourcePayloadVal,
+      mediaIds
     };
 
     await DB.put("inspections", obj);
@@ -1523,6 +1911,34 @@ async function openInspectionModal(inspection=null, opts={}){
     // Check alerts and notify
     await evaluateAlertsOnInspection(obj);
   };
+}
+
+async function openMediaModal(inspection){
+  const t = state.traps.find(x=>x.id===inspection.trapId);
+  let items = await DB.indexGetAll("media", "by_inspectionId", inspection.id);
+  if(!items.length && inspection.photoDataUrl){
+    items = [{ id:"legacy", kind:"image", dataUrl: inspection.photoDataUrl, createdAt: inspection.date }];
+  }
+  const title = `Media ispezione - ${t? t.name : "Trappola"}`;
+  const body = items.length ? `
+    <div class="media-grid">
+      ${items.map(m=>`
+        <div class="media-card">
+          <img class="media-thumb" src="${m.dataUrl}" alt="Foto ispezione" />
+          <div class="media-meta">
+            <div>${escapeHtml(m.filename || "Foto")}</div>
+            <div class="mini">${m.createdAt ? formatDate(m.createdAt) : ""}</div>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  ` : `<div class="mini">Nessuna foto associata a questa ispezione.</div>`;
+  openModal({
+    title,
+    bodyHTML: body,
+    footerButtons: [{ id:"mediaClose", label:"Chiudi" }]
+  });
+  $("#mediaClose").onclick = closeModal;
 }
 
 async function openAlertModal(alert=null){
@@ -1849,7 +2265,7 @@ function renderSuggestions(){
 // ---------- Data import/export ----------
 async function exportData(all=false){
   const payload = {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     traps: state.traps,
     inspections: state.inspections,
@@ -1857,6 +2273,10 @@ async function exportData(all=false){
     messages: state.messages,
     settings: state.settings
   };
+  if(all){
+    payload.media = state.media;
+    payload.outbox = state.outbox;
+  }
   const name = all ? "olivefly_backup.json" : "olivefly_data.json";
   downloadText(name, JSON.stringify(payload, null, 2), "application/json");
   toast("Export", "File JSON generato.");
@@ -1879,12 +2299,16 @@ async function importData(all=false){
         await DB.clear("inspections");
         await DB.clear("alerts");
         await DB.clear("messages");
+        await DB.clear("media");
+        await DB.clear("outbox");
       }
 
       for(const t of (j.traps||[])) await DB.put("traps", t);
       for(const i of (j.inspections||[])) await DB.put("inspections", i);
       for(const a of (j.alerts||[])) await DB.put("alerts", a);
       for(const m of (j.messages||[])) await DB.put("messages", m);
+      for(const m of (j.media||[])) await DB.put("media", m);
+      for(const o of (j.outbox||[])) await DB.put("outbox", o);
       if(j.settings) { state.settings = { ...state.settings, ...j.settings }; await DB.setSetting("app_settings", state.settings); }
 
       toast("Import completato", "Dati caricati.");
@@ -1903,6 +2327,8 @@ async function resetData(){
   await DB.clear("inspections");
   await DB.clear("alerts");
   await DB.clear("messages");
+  await DB.clear("media");
+  await DB.clear("outbox");
   await DB.setSetting("app_settings", null);
   state.map = { obj:null, layer:null, markers:[] };
   await loadAll();
@@ -1935,6 +2361,20 @@ async function evaluateAlertsOnInspection(insp){
     tags: ["alert","auto"]
   });
   state.messages = await DB.getAll("messages");
+
+  if(state.settings.enableWhatsappAlerts){
+    const waBody = [
+      body,
+      hits.map(h=>`- ${h.note||h.name}`).join("\n"),
+      `Adulti: ${insp.adults} | Femmine: ${insp.females} | Larve: ${insp.larvae}`
+    ].filter(Boolean).join("\n");
+    await enqueueWhatsappNotification({
+      title: "Alert automatico",
+      body: waBody,
+      context: { type: "alert", inspectionId: insp.id, trapId: insp.trapId, alertIds: hits.map(h=>h.id) }
+    });
+    toast("WhatsApp in coda", "Notifica pronta per invio.");
+  }
 }
 
 async function evaluateNearbyAlerts(){
@@ -1951,6 +2391,15 @@ async function evaluateNearbyAlerts(){
   const body = `${top.name} a ~${Math.round(top.dist)}m. Vuoi registrare un'ispezione?`;
   toast(title, body);
   pushNotification("OliveFly Sentinel — " + title, body);
+
+  if(state.settings.enableWhatsappNearby){
+    await enqueueWhatsappNotification({
+      title,
+      body,
+      context: { type: "nearby", trapId: top.id, distance: Math.round(top.dist) }
+    });
+    toast("WhatsApp in coda", "Notifica vicinanza aggiunta.");
+  }
 }
 
 // ---------- Share log ----------
