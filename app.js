@@ -22,7 +22,14 @@ const state = {
     whatsappNumber: "",
     contacts: [],
     enableWhatsappAlerts: true,
-    enableWhatsappNearby: false
+    enableWhatsappNearby: false,
+    enableWhatsappPhoto: true,
+    autoOpenWhatsapp: false,
+    whatsappNotifyTargets: [],
+    autoDetectEnabled: true,
+    autoDetectSensitivity: 60,
+    autoDetectMinSize: 18,
+    autoDetectApply: true
   },
   map: { obj: null, layer: null, markers: [] },
   charts: { weekly: null, byTrap: null, risk: null }
@@ -80,26 +87,61 @@ function getWhatsappTargets(){
   return targets;
 }
 
-async function enqueueWhatsappNotification({ title, body, context=null }){
-  const item = {
-    id: uid("wa"),
-    channel: "whatsapp",
-    status: "pending",
-    createdAt: new Date().toISOString(),
-    title,
-    body,
-    context
-  };
-  await DB.put("outbox", item);
+function getNotifyTargetsDetailed(){
+  const targets = [];
+  const seen = new Set();
+  for(const t of (state.settings.whatsappNotifyTargets || [])){
+    if(t.enabled === false) continue;
+    const phone = cleanPhoneNumber(t.phone);
+    if(!phone || seen.has(phone)) continue;
+    targets.push({ label: t.name || phone, phone });
+    seen.add(phone);
+  }
+  if(!targets.length){
+    const def = cleanPhoneNumber(state.settings.whatsappNumber);
+    if(def && !seen.has(def)){
+      targets.push({ label: "Numero predefinito", phone: def });
+      seen.add(def);
+    }
+  }
+  return targets;
+}
+
+async function enqueueWhatsappNotification({ title, body, context=null, targets=null, autoOpen=false }){
+  const list = (targets && targets.length) ? targets : [null];
+  const created = [];
+  const createdAt = new Date().toISOString();
+  for(const target of list){
+    const item = {
+      id: uid("wa"),
+      channel: "whatsapp",
+      status: "pending",
+      createdAt,
+      title,
+      body,
+      context,
+      targetPhone: target?.phone || "",
+      targetLabel: target?.label || ""
+    };
+    await DB.put("outbox", item);
+    created.push(item);
+  }
   state.outbox = await DB.getAll("outbox");
-  return item;
+  if(autoOpen && list.length && list[0]?.phone){
+    openWhatsApp(body, list[0].phone);
+  }
+  return created;
 }
 
 async function openWhatsappSendModal(item){
   const targets = getWhatsappTargets();
+  const presetPhone = cleanPhoneNumber(item.targetPhone || "");
+  if(presetPhone && !targets.some(t=>t.phone===presetPhone)){
+    targets.unshift({ label: item.targetLabel || "Destinatario", phone: presetPhone });
+  }
   const text = `${item.title}\n${item.body}`;
   const options = targets.length
-    ? targets.map((t, idx)=>`<option value="${t.phone}" ${idx===0 ? "selected":""}>${escapeHtml(t.label)} (${escapeHtml(t.phone)})</option>`).join("")
+    ? targets.map((t, idx)=>`<option value="${t.phone}" ${t.phone===presetPhone || (!presetPhone && idx===0) ? "selected":""}>${escapeHtml(t.label)} (${escapeHtml(t.phone)})</option>`).join("")
     : `<option value="">Nessun contatto salvato</option>`;
   const body = `
     <div class="row">
@@ -703,7 +745,7 @@ function viewTraps(){
 }
 
 function viewInspections(){
-  const items = applySearchFilter([...state.inspections].sort((a,b)=>b.date.localeCompare(a.date)), ["notes","operator","date","source","sourceRef","sourceNote"]);
+  const items = applySearchFilter([...state.inspections].sort((a,b)=>b.date.localeCompare(a.date)), ["notes","operator","date","source","sourceRef","sourceNote","autoCount"]);
   const el = document.createElement("div");
   el.innerHTML = `
     <div class="grid">
@@ -731,6 +773,7 @@ function viewInspections(){
                 const source = sourceLabel(i.source);
                 const sourceCls = sourceClass(i.source);
                 const sourceRef = i.sourceRef ? `<div class="mini">${escapeHtml(i.sourceRef)}</div>` : "";
+                const autoInfo = (i.autoCount != null) ? `<div class="mini">Auto: ${escapeHtml(String(i.autoCount))}</div>` : "";
                 const mediaCount = mediaCountForInspection(i);
                 const mediaBtn = mediaCount ? `<button class="btn small" data-media="${i.id}">Foto (${mediaCount})</button>` : `<span class="mini">—</span>`;
                 return `
@@ -741,7 +784,7 @@ function viewInspections(){
                     <td>${i.females}</td>
                     <td>${i.larvae}</td>
                     <td>${escapeHtml(meteo)}</td>
-                    <td><span class="pill ${sourceCls}">${source}</span>${sourceRef}</td>
+                    <td><span class="pill ${sourceCls}">${source}</span>${sourceRef}${autoInfo}</td>
                     <td>${mediaBtn}</td>
                     <td>${escapeHtml(i.notes||"")}</td>
                     <td style="text-align:right"><button class="btn small" data-open="${i.id}">Apri</button></td>
@@ -903,7 +946,7 @@ function viewMessages(){
             <div class="outbox-item">
               <div>
                 <div style="font-weight:700">${escapeHtml(o.title)}</div>
-                <div class="mini">${new Date(o.createdAt||Date.now()).toLocaleString("it-IT")}</div>
+                <div class="mini">${new Date(o.createdAt||Date.now()).toLocaleString("it-IT")}${o.targetPhone ? ` - ${escapeHtml(o.targetLabel || o.targetPhone)}` : ""}</div>
                 <div class="outbox-body">${escapeHtml(o.body||"").replaceAll("\n","<br/>")}</div>
               </div>
               <div class="row">
@@ -994,6 +1037,7 @@ function viewMessages(){
 function viewSettings(){
   const el = document.createElement("div");
   const contacts = state.settings.contacts || [];
+  const notifyTargets = state.settings.whatsappNotifyTargets || [];
   el.innerHTML = `
     <div class="grid">
       <div class="card" style="grid-column: span 8">
@@ -1035,22 +1079,6 @@ function viewSettings(){
               </select>
             </div>
           </div>
-          <div class="row" style="margin-top:12px">
-            <div class="field">
-              <label>WhatsApp su alert</label>
-              <select id="enableWhatsappAlerts">
-                <option value="true" ${state.settings.enableWhatsappAlerts ? "selected":""}>Attivo</option>
-                <option value="false" ${!state.settings.enableWhatsappAlerts ? "selected":""}>Disattivo</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>WhatsApp su vicinanza</label>
-              <select id="enableWhatsappNearby">
-                <option value="true" ${state.settings.enableWhatsappNearby ? "selected":""}>Attivo</option>
-                <option value="false" ${!state.settings.enableWhatsappNearby ? "selected":""}>Disattivo</option>
-              </select>
-            </div>
-          </div>
           <hr class="sep"/>
           <div class="row">
             <button class="btn" id="btnNotif">Notifiche</button>
@@ -1078,6 +1106,129 @@ function viewSettings(){
           <div class="mini">
             Esporta per inviare il backup a un agronomo o caricare su un server.
             Usa export completo per backup e trasferimenti tra dispositivi.
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 12">
+        <div class="hd">
+          <div>
+            <h2>Notifiche WhatsApp automatiche</h2>
+            <p>Destinatari e trigger (invio manuale)</p>
+          </div>
+        </div>
+        <div class="bd">
+          <div class="row">
+            <div class="field">
+              <label>WhatsApp su alert</label>
+              <select id="enableWhatsappAlerts">
+                <option value="true" ${state.settings.enableWhatsappAlerts ? "selected":""}>Attivo</option>
+                <option value="false" ${!state.settings.enableWhatsappAlerts ? "selected":""}>Disattivo</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>WhatsApp su foto</label>
+              <select id="enableWhatsappPhoto">
+                <option value="true" ${state.settings.enableWhatsappPhoto ? "selected":""}>Attivo</option>
+                <option value="false" ${!state.settings.enableWhatsappPhoto ? "selected":""}>Disattivo</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>WhatsApp su vicinanza</label>
+              <select id="enableWhatsappNearby">
+                <option value="true" ${state.settings.enableWhatsappNearby ? "selected":""}>Attivo</option>
+                <option value="false" ${!state.settings.enableWhatsappNearby ? "selected":""}>Disattivo</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Apri WhatsApp automaticamente</label>
+              <select id="autoOpenWhatsapp">
+                <option value="false" ${!state.settings.autoOpenWhatsapp ? "selected":""}>No</option>
+                <option value="true" ${state.settings.autoOpenWhatsapp ? "selected":""}>Si</option>
+              </select>
+            </div>
+          </div>
+          <div class="mini" style="margin-top:10px">
+            Le notifiche vengono preparate in coda: l'invio richiede conferma manuale in WhatsApp.
+          </div>
+          <hr class="sep"/>
+          <div class="row">
+            <div class="field">
+              <label>Nome (opzionale)</label>
+              <input id="wnName" placeholder="Es. Cooperativa" />
+            </div>
+            <div class="field">
+              <label>Telefono</label>
+              <input id="wnPhone" placeholder="Es. 393331112233" />
+            </div>
+            <div class="field" style="align-self:flex-end">
+              <button class="btn primary" id="wnAdd">Aggiungi destinatario</button>
+            </div>
+          </div>
+          <div style="margin-top:12px">
+            ${notifyTargets.length ? `
+              <table class="table">
+                <thead><tr><th>Nome</th><th>Telefono</th><th>Attivo</th><th></th></tr></thead>
+                <tbody>
+                  ${notifyTargets.map(t=>`
+                    <tr>
+                      <td>${escapeHtml(t.name||"")}</td>
+                      <td>${escapeHtml(t.phone)}</td>
+                      <td>
+                        <select data-wn-toggle="${escapeHtml(t.phone)}">
+                          <option value="true" ${t.enabled!==false ? "selected":""}>Si</option>
+                          <option value="false" ${t.enabled===false ? "selected":""}>No</option>
+                        </select>
+                      </td>
+                      <td style="text-align:right">
+                        <button class="btn small danger" data-wn-del="${escapeHtml(t.phone)}">Rimuovi</button>
+                      </td>
+                    </tr>
+                  `).join("")}
+                </tbody>
+              </table>
+            ` : `<div class="mini">Nessun destinatario configurato.</div>`}
+          </div>
+          <div class="row" style="margin-top:12px">
+            <button class="btn primary" id="btnSaveSettings2">Salva impostazioni</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 12">
+        <div class="hd">
+          <div>
+            <h2>Riconoscimento foto (beta)</h2>
+            <p>Conta automatica insetti su foto</p>
+          </div>
+        </div>
+        <div class="bd">
+          <div class="row">
+            <div class="field">
+              <label>Riconoscimento automatico</label>
+              <select id="autoDetectEnabled">
+                <option value="true" ${state.settings.autoDetectEnabled ? "selected":""}>Attivo</option>
+                <option value="false" ${!state.settings.autoDetectEnabled ? "selected":""}>Disattivo</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Applicazione automatica su adulti</label>
+              <select id="autoDetectApply">
+                <option value="true" ${state.settings.autoDetectApply ? "selected":""}>Si</option>
+                <option value="false" ${!state.settings.autoDetectApply ? "selected":""}>No</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Sensibilita <span id="autoDetectSensitivityVal">${state.settings.autoDetectSensitivity}</span></label>
+              <input id="autoDetectSensitivity" type="range" min="20" max="90" step="1" value="${state.settings.autoDetectSensitivity}" />
+            </div>
+            <div class="field">
+              <label>Dimensione minima blob</label>
+              <input id="autoDetectMinSize" type="number" min="6" max="200" step="1" value="${state.settings.autoDetectMinSize}" />
+            </div>
+          </div>
+          <div class="mini" style="margin-top:10px">
+            Suggerimento: aumenta la sensibilita se le catture non vengono rilevate, riduci se conta troppo rumore.
           </div>
         </div>
       </div>
@@ -1133,7 +1284,7 @@ function viewSettings(){
     </div>
   `;
 
-  el.querySelector("#btnSaveSettings").onclick = async ()=>{
+  const saveSettings = async ()=>{
     state.settings.nearRadiusM = Number($("#nearRadius").value || 200);
     state.settings.defaultThreshold = Number($("#defaultThreshold").value || 5);
     state.settings.whatsappNumber = $("#whatsNumber").value.trim();
@@ -1141,11 +1292,20 @@ function viewSettings(){
     state.settings.enableWeather = $("#enableWeather").value === "true";
     state.settings.enableWhatsappAlerts = $("#enableWhatsappAlerts").value === "true";
     state.settings.enableWhatsappNearby = $("#enableWhatsappNearby").value === "true";
+    state.settings.enableWhatsappPhoto = $("#enableWhatsappPhoto").value === "true";
+    state.settings.autoOpenWhatsapp = $("#autoOpenWhatsapp").value === "true";
+    state.settings.autoDetectEnabled = $("#autoDetectEnabled").value === "true";
+    state.settings.autoDetectApply = $("#autoDetectApply").value === "true";
+    state.settings.autoDetectSensitivity = Number($("#autoDetectSensitivity").value || 60);
+    state.settings.autoDetectMinSize = Number($("#autoDetectMinSize").value || 18);
     await DB.setSetting("app_settings", state.settings);
     toast("Salvato", "Impostazioni aggiornate.");
     updateBadges();
     render();
   };
+  el.querySelector("#btnSaveSettings").onclick = saveSettings;
+  const btnSaveSettings2 = $("#btnSaveSettings2");
+  if(btnSaveSettings2) btnSaveSettings2.onclick = saveSettings;
   el.querySelector("#btnNotif").onclick = ()=> requestNotifications();
   el.querySelector("#btnOffline").onclick = ()=> toast("Offline", "Apri la PWA una volta: l'app shell viene cachata automaticamente.");
   el.querySelector("#btnReset").onclick = ()=> resetData();
@@ -1184,6 +1344,46 @@ function viewSettings(){
     };
   });
 
+  const notifyAdd = $("#wnAdd");
+  if(notifyAdd){
+    notifyAdd.onclick = async ()=>{
+      const name = $("#wnName").value.trim();
+      const phone = cleanPhoneNumber($("#wnPhone").value.trim());
+      if(!phone){ toast("Telefono mancante", "Inserisci un numero valido."); return; }
+      const next = [...notifyTargets.filter(t=>t.phone!==phone), { name, phone, enabled: true }];
+      state.settings.whatsappNotifyTargets = next;
+      await DB.setSetting("app_settings", state.settings);
+      toast("Salvato", "Destinatario aggiunto.");
+      render();
+    };
+  }
+  $$("[data-wn-del]", el).forEach(btn=>{
+    btn.onclick = async ()=>{
+      const phone = btn.getAttribute("data-wn-del");
+      state.settings.whatsappNotifyTargets = notifyTargets.filter(t=>t.phone!==phone);
+      await DB.setSetting("app_settings", state.settings);
+      toast("Rimosso", "Destinatario eliminato.");
+      render();
+    };
+  });
+  $$("[data-wn-toggle]", el).forEach(sel=>{
+    sel.onchange = async ()=>{
+      const phone = sel.getAttribute("data-wn-toggle");
+      state.settings.whatsappNotifyTargets = notifyTargets.map(t=>t.phone===phone ? { ...t, enabled: sel.value === "true" } : t);
+      await DB.setSetting("app_settings", state.settings);
+      toast("Aggiornato", "Destinatario aggiornato.");
+      render();
+    };
+  });
+
+  const sensRange = $("#autoDetectSensitivity");
+  const sensLabel = $("#autoDetectSensitivityVal");
+  if(sensRange && sensLabel){
+    sensRange.oninput = ()=>{
+      sensLabel.textContent = String(sensRange.value);
+    };
+  }
+
   return el;
 }
 
@@ -1205,7 +1405,9 @@ function viewAbout(){
               <ul class="mini">
                 <li>CRUD trappole con coordinate + mappa</li>
                 <li>Ispezioni con catture, condizioni meteo, note</li>
+                <li>Riconoscimento foto (beta) con conteggio automatico</li>
                 <li>Alert su soglie + vicinanza</li>
+                <li>Notifiche WhatsApp in coda (alert/foto/vicinanza)</li>
                 <li>Analytics (Chart.js) + rischio euristico</li>
                 <li>Report condivisibile (Web Share / Clipboard)</li>
                 <li>Offline-first (IndexedDB) + PWA installabile</li>
@@ -1216,7 +1418,7 @@ function viewAbout(){
               <ul class="mini">
                 <li>Mappa online: richiede connettivita per le tile</li>
                 <li>Notifiche push: per background serve backend dedicato</li>
-                <li>WhatsApp: richiede app installata o WhatsApp Web</li>
+                <li>WhatsApp: richiede app installata o WhatsApp Web (invio manuale)</li>
               </ul>
             </div>
           </div>
@@ -1546,6 +1748,10 @@ async function openInspectionModal(inspection=null, opts={}){
   const legacyMedia = (!existingMedia.length && inspection?.photoDataUrl)
     ? [{ id:"legacy", dataUrl: inspection.photoDataUrl, legacy: true, filename: "Foto" }]
     : [];
+  let autoCountResult = (inspection?.autoCount != null)
+    ? { count: inspection.autoCount, at: inspection.autoCountAt || inspection.date, score: inspection.autoCountScore }
+    : null;
+  let autoCountSource = inspection?.autoCountSource || "";
 
   // Weather auto (optional)
   let weatherHint = "";
@@ -1652,6 +1858,13 @@ async function openInspectionModal(inspection=null, opts={}){
         ${weatherHint}
         <div class="mini" id="iTrapInfo"></div>
         <hr class="sep"/>
+        <div style="font-weight:700; margin-bottom:8px">Riconoscimento foto (beta)</div>
+        <div class="mini" id="iAutoCountBox"></div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn" id="iAutoCount">Conta da foto</button>
+          <button class="btn" id="iApplyAutoCount">Applica</button>
+        </div>
+        <hr class="sep"/>
         <div style="font-weight:700; margin-bottom:8px">Rischio attuale trappola</div>
         <div class="mini" id="iRiskNow"></div>
       </div>
@@ -1690,11 +1903,30 @@ async function openInspectionModal(inspection=null, opts={}){
   const pendingMedia = [];
   const removedMediaIds = new Set();
   const mediaList = $("#iMediaList");
+  const autoCountBox = $("#iAutoCountBox");
+  const autoCountBtn = $("#iAutoCount");
+  const autoCountApplyBtn = $("#iApplyAutoCount");
+
+  function updateAutoCountBox(){
+    if(!autoCountBox) return;
+    if(autoCountResult){
+      const when = autoCountResult.at ? ` - ${formatDate(autoCountResult.at)}` : "";
+      const sourceTxt = autoCountSource ? `<div class="mini">Fonte: ${escapeHtml(autoCountSource)}</div>` : "";
+      autoCountBox.innerHTML = `Conteggio stimato: <b>${autoCountResult.count}</b>${when}${sourceTxt}`;
+    }else{
+      autoCountBox.innerHTML = "Nessun conteggio disponibile.";
+    }
+    if(autoCountApplyBtn) autoCountApplyBtn.disabled = !autoCountResult;
+  }
+
   function renderMediaList(){
     if(!mediaList) return;
     const activeExisting = [...existingMedia, ...legacyMedia].filter(m=>!removedMediaIds.has(m.id));
     if(!activeExisting.length && !pendingMedia.length){
       mediaList.innerHTML = `<div class="mini">Nessuna foto allegata.</div>`;
+      autoCountResult = null;
+      autoCountSource = "";
+      updateAutoCountBox();
       return;
     }
     const cards = [];
@@ -1751,6 +1983,56 @@ async function openInspectionModal(inspection=null, opts={}){
     updateSourceUI();
   }
 
+  function getLatestMediaForDetection(){
+    if(pendingMedia.length){
+      const m = pendingMedia[pendingMedia.length - 1];
+      return { dataUrl: m.dataUrl, source: m.filename || "Nuova foto" };
+    }
+    const activeExisting = [...existingMedia, ...legacyMedia].filter(m=>!removedMediaIds.has(m.id));
+    if(activeExisting.length){
+      const m = activeExisting[0];
+      return { dataUrl: m.dataUrl, source: m.filename || "Foto salvata" };
+    }
+    return null;
+  }
+
+  async function runAutoCount(){
+    const media = getLatestMediaForDetection();
+    if(!media){
+      toast("Nessuna foto", "Aggiungi una foto per il riconoscimento.");
+      return;
+    }
+    if(autoCountBox) autoCountBox.innerHTML = "Analisi in corso...";
+    try{
+      const res = await detectInsectsFromImage(media.dataUrl, getDetectionOptions());
+      autoCountResult = { count: res.count, at: new Date().toISOString(), score: res.maskRatio };
+      autoCountSource = media.source;
+      updateAutoCountBox();
+      if(sourceSelect && sourceSelect.value === "manual"){
+        sourceSelect.value = "image";
+        updateSourceUI();
+      }
+      if(state.settings.autoDetectApply){
+        $("#iAdults").value = res.count;
+      }
+    }catch(e){
+      updateAutoCountBox();
+      toast("Errore riconoscimento", "Impossibile analizzare la foto.");
+    }
+  }
+
+  if(autoCountBtn){
+    autoCountBtn.onclick = ()=> runAutoCount();
+  }
+  if(autoCountApplyBtn){
+    autoCountApplyBtn.onclick = ()=>{
+      if(!autoCountResult) return;
+      $("#iAdults").value = autoCountResult.count;
+      toast("Applicato", "Conteggio inserito in Adulti.");
+    };
+  }
+  updateAutoCountBox();
+
   const photoInput = $("#iPhoto");
   if(photoInput){
     photoInput.onchange = async ()=>{
@@ -1766,6 +2048,9 @@ async function openInspectionModal(inspection=null, opts={}){
       }
       photoInput.value = "";
       renderMediaList();
+      if(files.length && state.settings.autoDetectEnabled){
+        await runAutoCount();
+      }
     };
   }
 
@@ -1882,6 +2167,12 @@ async function openInspectionModal(inspection=null, opts={}){
       mediaIds.push(mediaId);
     }
 
+    const hasMedia = mediaIds.length > 0;
+    const finalAutoCount = hasMedia ? (autoCountResult ? autoCountResult.count : (inspection?.autoCount ?? null)) : null;
+    const finalAutoCountAt = hasMedia ? (autoCountResult ? autoCountResult.at : (inspection?.autoCountAt || null)) : null;
+    const finalAutoCountSource = hasMedia ? (autoCountResult ? autoCountSource : (inspection?.autoCountSource || "")) : "";
+    const finalAutoCountScore = hasMedia ? (autoCountResult ? autoCountResult.score : (inspection?.autoCountScore ?? null)) : null;
+
     const obj = {
       id: inspId,
       trapId,
@@ -1898,11 +2189,17 @@ async function openInspectionModal(inspection=null, opts={}){
       sourceRef: sourceRefVal,
       sourceNote: sourceNoteVal,
       sourcePayload: sourcePayloadVal,
-      mediaIds
+      mediaIds,
+      autoCount: finalAutoCount,
+      autoCountAt: finalAutoCountAt,
+      autoCountSource: finalAutoCountSource,
+      autoCountScore: finalAutoCountScore
     };
 
     await DB.put("inspections", obj);
     toast(isEdit ? "Salvata" : "Registrata", `Ispezione ${formatDate(obj.date)}`);
+
+    await maybeQueuePhotoNotification(obj, autoCountResult);
 
     await loadAll();
     closeModal();
@@ -2234,6 +2531,37 @@ function buildQuickUpdateText(){
   return lines.join("\n");
 }
 
+function buildPhotoNotificationText(insp, trap, autoCount){
+  const lines = [];
+  lines.push(`Ispezione con foto`);
+  lines.push(`${trap? trap.name : "Trappola"} - ${formatDate(insp.date)}`);
+  lines.push(`Adulti: ${insp.adults} | Femmine: ${insp.females} | Larve: ${insp.larvae}`);
+  if(autoCount != null) lines.push(`Auto foto: ${autoCount}`);
+  if(insp.operator) lines.push(`Operatore: ${insp.operator}`);
+  if(insp.notes) lines.push(insp.notes);
+  return lines.join("\n");
+}
+
+async function maybeQueuePhotoNotification(insp, autoCountResult){
+  if(!state.settings.enableWhatsappPhoto) return;
+  if(!insp.mediaIds || !insp.mediaIds.length) return;
+  const targets = getNotifyTargetsDetailed();
+  if(!targets.length){
+    toast("WhatsApp", "Nessun destinatario configurato: notifica in coda senza numero.");
+  }
+  const trap = state.traps.find(t=>t.id===insp.trapId);
+  const autoCount = (autoCountResult && autoCountResult.count != null) ? autoCountResult.count : insp.autoCount;
+  const body = buildPhotoNotificationText(insp, trap, autoCount);
+  await enqueueWhatsappNotification({
+    title: "Notifica foto",
+    body,
+    context: { type: "photo", inspectionId: insp.id, trapId: insp.trapId, autoCount },
+    targets,
+    autoOpen: state.settings.autoOpenWhatsapp
+  });
+  toast("WhatsApp in coda", "Notifica foto pronta per invio.");
+}
+
 function suggestActions(){
   const sug = [];
   // Identify top risk traps
@@ -2371,7 +2699,9 @@ async function evaluateAlertsOnInspection(insp){
     await enqueueWhatsappNotification({
       title: "Alert automatico",
       body: waBody,
-      context: { type: "alert", inspectionId: insp.id, trapId: insp.trapId, alertIds: hits.map(h=>h.id) }
+      context: { type: "alert", inspectionId: insp.id, trapId: insp.trapId, alertIds: hits.map(h=>h.id) },
+      targets: getNotifyTargetsDetailed(),
+      autoOpen: state.settings.autoOpenWhatsapp
     });
     toast("WhatsApp in coda", "Notifica pronta per invio.");
   }
@@ -2396,7 +2726,9 @@ async function evaluateNearbyAlerts(){
     await enqueueWhatsappNotification({
       title,
       body,
-      context: { type: "nearby", trapId: top.id, distance: Math.round(top.dist) }
+      context: { type: "nearby", trapId: top.id, distance: Math.round(top.dist) },
+      targets: getNotifyTargetsDetailed(),
+      autoOpen: false
     });
     toast("WhatsApp in coda", "Notifica vicinanza aggiunta.");
   }
@@ -2526,6 +2858,112 @@ function fileToDataUrl(file){
     r.onerror = ()=> reject(r.error);
     r.readAsDataURL(file);
   });
+}
+
+function loadImageFromDataUrl(dataUrl){
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    img.onload = ()=> resolve(img);
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
+function getDetectionOptions(){
+  return {
+    maxWidth: 360,
+    sensitivity: Number(state.settings.autoDetectSensitivity || 60),
+    minPixels: Number(state.settings.autoDetectMinSize || 18),
+    maxCount: 500
+  };
+}
+
+async function detectInsectsFromImage(dataUrl, options){
+  const opts = { maxWidth:360, sensitivity:60, minPixels:18, maxCount:500, ...(options||{}) };
+  const img = await loadImageFromDataUrl(dataUrl);
+  const scale = Math.min(1, opts.maxWidth / Math.max(1, img.width));
+  const w = Math.max(1, Math.round(img.width * scale));
+  const h = Math.max(1, Math.round(img.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+  const n = w * h;
+  const dark = new Float32Array(n);
+  let sum = 0;
+  let sumSq = 0;
+  for(let i=0, p=0; i<n; i++, p+=4){
+    const r = data[p];
+    const g = data[p+1];
+    const b = data[p+2];
+    const brightness = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const d = 255 - brightness;
+    dark[i] = d;
+    sum += d;
+    sumSq += d * d;
+  }
+  const mean = sum / n;
+  const variance = Math.max(0, (sumSq / n) - mean * mean);
+  const std = Math.sqrt(variance);
+  const k = 0.4 + (opts.sensitivity / 100) * 1.2;
+  const threshold = mean + std * k;
+
+  const mask = new Uint8Array(n);
+  let maskCount = 0;
+  for(let i=0; i<n; i++){
+    if(dark[i] > threshold){
+      mask[i] = 1;
+      maskCount++;
+    }
+  }
+
+  const visited = new Uint8Array(n);
+  const queue = [];
+  let count = 0;
+  const maxCount = Math.max(1, opts.maxCount || 500);
+  const minPixels = Math.max(1, opts.minPixels || 18);
+
+  for(let i=0; i<n; i++){
+    if(!mask[i] || visited[i]) continue;
+    count++;
+    if(count > maxCount) break;
+    let area = 0;
+    queue.length = 0;
+    queue.push(i);
+    visited[i] = 1;
+    for(let qi=0; qi<queue.length; qi++){
+      const idx = queue[qi];
+      area++;
+      const x = idx % w;
+      const y = Math.floor(idx / w);
+      for(let dy=-1; dy<=1; dy++){
+        for(let dx=-1; dx<=1; dx++){
+          if(dx===0 && dy===0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if(nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const ni = ny * w + nx;
+          if(mask[ni] && !visited[ni]){
+            visited[ni] = 1;
+            queue.push(ni);
+          }
+        }
+      }
+    }
+    if(area < minPixels){
+      count--;
+    }
+  }
+
+  return {
+    count: Math.max(0, count),
+    threshold,
+    maskRatio: maskCount / Math.max(1, n),
+    width: w,
+    height: h
+  };
 }
 
 // ---------- Global controls ----------

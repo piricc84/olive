@@ -170,6 +170,12 @@ button, input, select, textarea{font:inherit; touch-action: manipulation}
   transition:.18s ease;
   box-shadow: 0 6px 14px rgba(31,42,31,.08);
 }
+.btn:disabled{
+  opacity:.6;
+  cursor:not-allowed;
+  transform:none;
+  box-shadow:none;
+}
 .btn:hover{transform: translateY(-1px); border-color: rgba(91,120,59,.45)}
 .btn.primary{
   background: linear-gradient(135deg, rgba(91,120,59,.24), rgba(183,194,123,.24));
@@ -252,6 +258,13 @@ button, input, select, textarea{font:inherit; touch-action: manipulation}
 }
 .table th{color:var(--muted); font-weight:600}
 .table tr:hover td{background: rgba(91,120,59,.06)}
+.table select{
+  padding:6px 8px;
+  border-radius:10px;
+  border:1px solid var(--border);
+  background: rgba(255,255,255,.85);
+  color: var(--text);
+}
 .pill{
   display:inline-flex; align-items:center; gap:6px;
   padding:4px 10px;
